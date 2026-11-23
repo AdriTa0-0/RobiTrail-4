@@ -1,0 +1,50 @@
+  {
+    id: 'ctg-1',
+    cityId: 'chattogram',
+    order: 1,
+    iconType: 'message-route',
+    title: { en: 'The Message Journey', bn: 'বার্তার যাত্রাপথ' },
+    subtitle: { en: '3D Street Network Routing', bn: '৩ডি সড়ক নেটওয়ার্ক রাউটিং' },
+    objective: {
+      en: 'Connect the 5-hop route across Agrabad street and launch the message packet to the receiving phone.',
+      bn: 'আগ্রাবাদ সড়কের ৫টি ধাপ যুক্ত করে গ্রাহক ফোনে বার্তা প্যাকেট পাঠান।',
+    },
+    howToPlay: [
+      { en: 'Walk with WASD or click the street toward each glowing ring and click it (or click Operate).', bn: 'WASD বা ক্লিক করে প্রতিটি জ্বলন্ত রিংয়ের কাছে যান এবং সরাসরি ক্লিক বা অপারেট চাপুন।' },
+      { en: 'Activate hops in order: Sender Phone → Agrabad Tower → Core Hub → Patenga Tower → Receiver.', bn: 'প্রেরক ফোন → আগ্রাবাদ টাওয়ার → কোর হাব → পতেঙ্গা টাওয়ার → গ্রাহক ক্রমে যুক্ত করুন।' },
+      { en: 'Click Launch Packet and watch it fly across the 3D skyline.', bn: 'প্যাকেট পাঠান এবং ৩ডি আকাশপথে তার যাত্রা দেখুন।' },
+    ],
+    watchDemo: {
+      en: 'Signals never jump phone-to-phone across a city; watch how each hop relays upward to a tower, through fiber core, and down again.',
+      bn: 'ফোন সরাসরি দূরে বার্তা পাঠাতে পারে না; প্রতিটি সংকেত টাওয়ার ও কোর হাব হয়ে গন্তব্যে যায়।',
+    },
+    tryPrompt: {
+      en: 'Step onto the left Sender Phone pad first—look for the glowing ring.',
+      bn: 'প্রথমে বাম দিকের প্রেরক ফোনের সবুজ-কমলা রিংয়ের কাছে যান।',
+    },
+    discoverNote: {
+      en: 'Every call or chat takes a last-mile wireless hop to a local tower before riding underground fiber through the core.',
+      bn: 'প্রতিটি কল বা চ্যাট প্রথমে বেতার তরঙ্গে টাওয়ারে ওঠে এবং পরে ফাইবার কোর হয়ে অন্য প্রান্তে নামে।',
+    },
+    tip: {
+      en: 'Follow the numbered sequence from left (Sender) to right (Receiver) without skipping the Core Switching Hub.',
+      bn: 'বাম থেকে ডানে ধারাবাহিক ক্রম অনুসরণ করুন এবং কোর সুইচিং হাব বাদ দেবেন না।',
+    },
+    hintTarget: {
+      en: 'Target Highlight: Look for the pulsing cyan beacon at the next unlinked station along the Agrabad street.',
+      bn: 'টার্গেট নির্দেশ: রাস্তার পরবর্তী অসংযুক্ত স্টেশনের উজ্জ্বল নীল বিকনের দিকে এগিয়ে যান।',
+    },
+    hintAction: {
+      en: 'Next Action: Click the ground beside the highlighted station (or walk with WASD), then click the station or Operate to lock the hop.',
+      bn: 'পরবর্তী কাজ: চিহ্নিত স্টেশনের পাশে হেঁটে গিয়ে অপারেট বা সরাসরি স্টেশনে ক্লিক করুন।',
+    },
+    handbookTopicId: 'how-tower-works',
+    isPremium: false,
+    worldAnchor: [-7, 2.5, -5],
+    landmarkLabel: { en: 'Agrabad Relay Street', bn: 'আগ্রাবাদ রিলে সড়ক' },
+    nextTeaser: {
+      text: { en: 'Next up: Place a signal tower across Chattogram’s 10-home hillside...', bn: 'পরবর্তী ধাপ: চট্টগ্রামের ১০টি বাড়ির পাহাড়ি এলাকায় টাওয়ার স্থাপন...' },
+      targetCityId: 'chattogram',
+      targetTrailId: 'ctg-2',
+    },
+  },

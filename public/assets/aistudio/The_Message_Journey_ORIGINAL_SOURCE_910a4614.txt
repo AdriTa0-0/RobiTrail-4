@@ -1,0 +1,514 @@
+import React, { useCallback, useRef, useState } from 'react';
+import * as THREE from 'three';
+import { useRobiTrail } from '../../../context/RobiTrailContext';
+import {
+  ThreeMissionHarness,
+  type HarnessApi,
+  type InteractiveStation,
+  type ObstacleBox,
+} from './ThreeMissionHarness';
+import { Send, AlertTriangle, CheckCircle2, Smartphone, Radio } from 'lucide-react';
+
+interface Game1Props {
+  paused?: boolean;
+  onProgress: (pct: number) => void;
+  onComplete: () => void;
+}
+
+const ROUTE_STAGES = [
+  { id: 'sender', label: { en: 'Sender Phone', bn: 'প্রেরক ফোন' }, pos: [-13, 0, 3.5] as const },
+  { id: 'tower-a', label: { en: 'Agrabad Tower', bn: 'আগ্রাবাদ টাওয়ার' }, pos: [-6.5, 0, -4.5] as const },
+  { id: 'core', label: { en: 'Core Switching Hub', bn: 'কোর সুইচিং হাব' }, pos: [0, 0, 3.5] as const },
+  { id: 'tower-b', label: { en: 'Patenga Tower', bn: 'পতেঙ্গা টাওয়ার' }, pos: [6.5, 0, -4.5] as const },
+  { id: 'receiver', label: { en: 'Receiver Phone', bn: 'গ্রাহক ফোন' }, pos: [13, 0, 3.5] as const },
+];
+
+export const Game1MessageJourney3D: React.FC<Game1Props> = ({ paused, onProgress, onComplete }) => {
+  const { lang } = useRobiTrail();
+  const [activatedIds, setActivatedIds] = useState<string[]>([]);
+  const [statusCue, setStatusCue] = useState<{ type: 'info' | 'error' | 'ok'; text: string } | null>(null);
+  const [packetFlying, setPacketFlying] = useState(false);
+  const [delivered, setDelivered] = useState(false);
+
+  const activatedRef = useRef<string[]>([]);
+  const stationsRef = useRef<InteractiveStation[]>([]);
+  const linkLinesRef = useRef<THREE.Mesh[]>([]);
+  const packetMeshRef = useRef<THREE.Mesh | null>(null);
+  const harnessApiRef = useRef<HarnessApi | null>(null);
+  const packetProgressRef = useRef<number>(-1);
+  const onProgressRef = useRef(onProgress);
+  const onCompleteRef = useRef(onComplete);
+  onProgressRef.current = onProgress;
+  onCompleteRef.current = onComplete;
+
+  const syncStationStates = useCallback((nextActivated: string[], wrongId?: string) => {
+    const expectedNext = ROUTE_STAGES[nextActivated.length]?.id;
+    stationsRef.current.forEach((st) => {
+      if (nextActivated.includes(st.id)) {
+        st.state = 'completed';
+      } else if (st.id === wrongId) {
+        st.state = 'invalid';
+      } else if (st.id === expectedNext) {
+        st.state = 'highlighted';
+      } else {
+        st.state = 'idle';
+      }
+    });
+    linkLinesRef.current.forEach((line, idx) => {
+      line.visible = idx < Math.max(0, nextActivated.length - 1);
+    });
+  }, []);
+
+  const handleStationInteract = useCallback(
+    (stationId: string) => {
+      if (packetFlying || delivered) return;
+      const current = activatedRef.current;
+      if (current.includes(stationId)) return;
+
+      const expected = ROUTE_STAGES[current.length];
+      if (!expected) return;
+
+      if (stationId !== expected.id) {
+        syncStationStates(current, stationId);
+        setStatusCue({
+          type: 'error',
+          text:
+            lang === 'en'
+              ? `Wait! Next link needed is ${expected.label.en}.`
+              : `ভুল ধাপ! পরবর্তী প্রয়োজনীয় নোড হলো: ${expected.label.bn}।`,
+        });
+        window.setTimeout(() => syncStationStates(activatedRef.current), 750);
+        return;
+      }
+
+      const next = [...current, stationId];
+      activatedRef.current = next;
+      setActivatedIds(next);
+      syncStationStates(next);
+
+      const pct = Math.round((next.length / 5) * 80);
+      onProgressRef.current(pct);
+
+      if (next.length < 5) {
+        const upNext = ROUTE_STAGES[next.length];
+        setStatusCue({
+          type: 'info',
+          text:
+            lang === 'en'
+              ? `Connected ${expected.label.en}! Next: ${upNext.label.en}`
+              : `${expected.label.bn} যুক্ত হয়েছে! এরপর: ${upNext.label.bn}`,
+        });
+      } else {
+        setStatusCue({
+          type: 'ok',
+          text:
+            lang === 'en'
+              ? 'Full 5-hop route ready! Click Launch Message Packet.'
+              : 'সম্পূর্ণ ৫-ধাপের রুট প্রস্তুত! প্যাকেট পাঠাতে Launch চাপুন।',
+        });
+      }
+    },
+    [delivered, lang, packetFlying, syncStationStates],
+  );
+
+  const launchPacket = useCallback(() => {
+    if (activatedRef.current.length < 5 || packetFlying || delivered) return;
+    setPacketFlying(true);
+    packetProgressRef.current = 0;
+    if (packetMeshRef.current) {
+      packetMeshRef.current.visible = true;
+    }
+    setStatusCue({
+      type: 'info',
+      text:
+        lang === 'en'
+          ? 'Message packet traveling across Agrabad corridor...'
+          : 'বার্তা প্যাকেট আগ্রাবাদ করিডোর দিয়ে প্রেরিত হচ্ছে...',
+    });
+  }, [delivered, lang, packetFlying]);
+
+  const onSceneReady = useCallback(
+    (api: HarnessApi) => {
+      harnessApiRef.current = api;
+      const { scene } = api;
+
+      // Agrabad ground & asphalt street corridor
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(46, 28),
+        new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.92 }),
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      const road = new THREE.Mesh(
+        new THREE.BoxGeometry(40, 0.06, 7.2),
+        new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.85 }),
+      );
+      road.position.y = 0.03;
+      road.receiveShadow = true;
+      scene.add(road);
+
+      // Center dashed road markings
+      for (let x = -16; x <= 16; x += 4) {
+        const dash = new THREE.Mesh(
+          new THREE.BoxGeometry(1.8, 0.07, 0.22),
+          new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 }),
+        );
+        dash.position.set(x, 0.04, 0);
+        scene.add(dash);
+      }
+
+      // Background Chattogram harbor buildings (non-blocking scenery)
+      const obstacles: ObstacleBox[] = [];
+      const bSpecs = [
+        { x: -13, z: -9.5, w: 6, h: 6.5, d: 3.5, c: 0x475569 },
+        { x: -1, z: -10.2, w: 5.5, h: 8, d: 3.5, c: 0x3f4e63 },
+        { x: 11, z: -9.5, w: 6, h: 7, d: 3.5, c: 0x475569 },
+      ];
+      bSpecs.forEach((b) => {
+        const m = new THREE.Mesh(
+          new THREE.BoxGeometry(b.w, b.h, b.d),
+          new THREE.MeshStandardMaterial({ color: b.c, roughness: 0.75 }),
+        );
+        m.position.set(b.x, b.h / 2, b.z);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        scene.add(m);
+        obstacles.push({
+          minX: b.x - b.w / 2,
+          maxX: b.x + b.w / 2,
+          minZ: b.z - b.d / 2,
+          maxZ: b.z + b.d / 2,
+        });
+      });
+
+      // Build 5 interactive stations
+      const stations: InteractiveStation[] = [];
+      const pathWaypoints: THREE.Vector3[] = [];
+
+      ROUTE_STAGES.forEach((stage) => {
+        const group = new THREE.Group();
+        group.position.set(stage.pos[0], 0, stage.pos[2]);
+        group.userData.stationId = stage.id;
+
+        const base = new THREE.Mesh(
+          new THREE.CylinderGeometry(1.15, 1.3, 0.25, 20),
+          new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.5 }),
+        );
+        base.position.y = 0.125;
+        base.receiveShadow = true;
+        group.add(base);
+
+        const ringMesh = new THREE.Mesh(
+          new THREE.RingGeometry(1.4, 1.65, 28),
+          new THREE.MeshBasicMaterial({ color: 0x64748b, side: THREE.DoubleSide }),
+        );
+        ringMesh.rotation.x = -Math.PI / 2;
+        ringMesh.position.y = 0.05;
+        group.add(ringMesh);
+
+        let antennaTipY = 2.4;
+        if (stage.id === 'sender' || stage.id === 'receiver') {
+          // Oversized upright kiosk smartphone
+          const pedestal = new THREE.Mesh(
+            new THREE.BoxGeometry(0.9, 1.1, 0.7),
+            new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.4 }),
+          );
+          pedestal.position.y = 0.65;
+          pedestal.castShadow = true;
+          const phone = new THREE.Mesh(
+            new THREE.BoxGeometry(0.95, 1.55, 0.14),
+            new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.5, roughness: 0.3 }),
+          );
+          phone.position.y = 1.9;
+          phone.castShadow = true;
+          const screen = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.76, 1.26),
+            new THREE.MeshStandardMaterial({
+              color: stage.id === 'sender' ? 0xf59e0b : 0x38bdf8,
+              emissive: stage.id === 'sender' ? 0xd97706 : 0x0284c7,
+              emissiveIntensity: 0.55,
+            }),
+          );
+          screen.position.set(0, 1.9, 0.08);
+          group.add(pedestal, phone, screen);
+          antennaTipY = 2.8;
+        } else if (stage.id === 'core') {
+          const cabinet = new THREE.Mesh(
+            new THREE.BoxGeometry(1.8, 2.8, 1.3),
+            new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.6, roughness: 0.35 }),
+          );
+          cabinet.position.y = 1.45;
+          cabinet.castShadow = true;
+          const strip = new THREE.Mesh(
+            new THREE.BoxGeometry(1.4, 0.18, 1.34),
+            new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x059669, emissiveIntensity: 0.8 }),
+          );
+          strip.position.y = 2.0;
+          group.add(cabinet, strip);
+          antennaTipY = 3.1;
+        } else {
+          // Lattice cellular tower
+          const mast = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.18, 0.65, 6.2, 6),
+            new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.65, roughness: 0.35 }),
+          );
+          mast.position.y = 3.2;
+          mast.castShadow = true;
+          const dish = new THREE.Mesh(
+            new THREE.BoxGeometry(1.4, 0.4, 0.4),
+            new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.3 }),
+          );
+          dish.position.y = 5.9;
+          group.add(mast, dish);
+          antennaTipY = 6.2;
+        }
+
+        const beaconMesh = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.36, 0),
+          new THREE.MeshStandardMaterial({
+            color: 0x64748b,
+            emissive: 0x64748b,
+            emissiveIntensity: 0.5,
+          }),
+        );
+        beaconMesh.position.y = antennaTipY + 0.7;
+        group.add(beaconMesh);
+
+        // Generous invisible hitbox for comfortable mouse/touch raycast
+        const hitMesh = new THREE.Mesh(
+          new THREE.CylinderGeometry(1.6, 1.6, 5.5, 10),
+          new THREE.MeshBasicMaterial({ visible: false }),
+        );
+        hitMesh.position.y = 2.5;
+        hitMesh.userData.stationId = stage.id;
+        group.add(hitMesh);
+
+        scene.add(group);
+        pathWaypoints.push(new THREE.Vector3(stage.pos[0], antennaTipY, stage.pos[2]));
+
+        obstacles.push({
+          minX: stage.pos[0] - 1.05,
+          maxX: stage.pos[0] + 1.05,
+          minZ: stage.pos[2] - 1.05,
+          maxZ: stage.pos[2] + 1.05,
+          maxY: antennaTipY + 0.5,
+          label: stage.label,
+        });
+
+        stations.push({
+          id: stage.id,
+          label: stage.label,
+          position: new THREE.Vector3(stage.pos[0], 0, stage.pos[2]),
+          state: stage.id === 'sender' ? 'highlighted' : 'idle',
+          hitMesh: group,
+          ringMesh,
+          beaconMesh,
+          radius: 4.1,
+        });
+      });
+
+      // Overhead RF / Fiber Link Beams between adjacent stations
+      const lines: THREE.Mesh[] = [];
+      for (let i = 0; i < pathWaypoints.length - 1; i++) {
+        const a = pathWaypoints[i];
+        const b = pathWaypoints[i + 1];
+        const dist = a.distanceTo(b);
+        const beam = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.08, 0.08, dist, 8),
+          new THREE.MeshStandardMaterial({
+            color: 0x10b981,
+            emissive: 0x059669,
+            emissiveIntensity: 0.9,
+          }),
+        );
+        beam.position.copy(a).lerp(b, 0.5);
+        beam.quaternion.setFromUnitVectors(
+          new THREE.Vector3(0, 1, 0),
+          b.clone().sub(a).normalize(),
+        );
+        beam.visible = false;
+        scene.add(beam);
+        lines.push(beam);
+      }
+
+      // Glowing 3D Data Packet Sphere
+      const packetMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.48, 16, 16),
+        new THREE.MeshStandardMaterial({
+          color: 0xfbbf24,
+          emissive: 0xf59e0b,
+          emissiveIntensity: 1.6,
+        }),
+      );
+      packetMesh.visible = false;
+      scene.add(packetMesh);
+
+      stationsRef.current = stations;
+      linkLinesRef.current = lines;
+      packetMeshRef.current = packetMesh;
+
+      api.registerStations(stations);
+      api.registerObstacles(obstacles);
+
+      const camPosTmp = new THREE.Vector3();
+      const camTargetTmp = new THREE.Vector3();
+
+      api.setFrameUpdater((delta) => {
+        if (packetProgressRef.current >= 0 && packetProgressRef.current < 1) {
+          packetProgressRef.current = Math.min(1, packetProgressRef.current + delta * 0.24);
+          const t = packetProgressRef.current;
+          const totalSegs = pathWaypoints.length - 1;
+          const segFloat = t * totalSegs;
+          const segIdx = Math.min(totalSegs - 1, Math.floor(segFloat));
+          const localT = segFloat - segIdx;
+
+          packetMesh.position.lerpVectors(pathWaypoints[segIdx], pathWaypoints[segIdx + 1], localT);
+          camTargetTmp.copy(packetMesh.position);
+          camPosTmp.set(packetMesh.position.x, packetMesh.position.y + 4.5, packetMesh.position.z + 11.5);
+          api.setCameraGoal(camPosTmp, camTargetTmp);
+
+          if (packetProgressRef.current >= 1) {
+            packetProgressRef.current = -1;
+            setPacketFlying(false);
+            setDelivered(true);
+            api.setCameraGoal(null);
+            onProgressRef.current(100);
+            onCompleteRef.current();
+          }
+        }
+      });
+
+      return () => {
+        stationsRef.current = [];
+        linkLinesRef.current = [];
+        packetMeshRef.current = null;
+      };
+    },
+    [],
+  );
+
+  // Accessible 2D Light Fallback
+  const fallback2D = (
+    <div className="w-full max-w-2xl bg-slate-950 border border-slate-800 rounded-2xl p-6 text-white space-y-4">
+      <div className="text-xs font-mono text-amber-300">2D ACCESSIBILITY MODE · AGRABAD ROUTE</div>
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+        {ROUTE_STAGES.map((st, idx) => {
+          const done = activatedIds.includes(st.id);
+          const isNext = ROUTE_STAGES[activatedIds.length]?.id === st.id;
+          return (
+            <button
+              key={st.id}
+              type="button"
+              onClick={() => handleStationInteract(st.id)}
+              className={`p-3 rounded-xl border text-xs font-semibold transition-all ${
+                done
+                  ? 'bg-emerald-950 border-emerald-500 text-emerald-100'
+                  : isNext
+                    ? 'bg-rose-600 border-rose-400 text-white'
+                    : 'bg-slate-900 border-slate-700 text-slate-300'
+              }`}
+            >
+              <div className="font-mono text-[10px] opacity-75">0{idx + 1}</div>
+              <div className="mt-1">{st.label[lang]}</div>
+            </button>
+          );
+        })}
+      </div>
+      {activatedIds.length === 5 && !delivered && (
+        <button
+          type="button"
+          onClick={launchPacket}
+          className="px-4 py-2 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold"
+        >
+          {lang === 'en' ? 'Launch Message Packet' : 'বার্তা প্যাকেট পাঠান'}
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="relative w-full h-full">
+      <ThreeMissionHarness
+        bounds={{ minX: -18, maxX: 18, minZ: -8, maxZ: 9 }}
+        initialPlayerPos={[-13, 0, 6.5]}
+        initialCameraOffset={[0, 12, 16]}
+        skyColor="#7dd3fc"
+        fogColor="#dbeafe"
+        cityBackdrop="chattogram"
+        paused={paused}
+        onSceneReady={onSceneReady}
+        onStationInteract={handleStationInteract}
+        onFallbackView={fallback2D}
+      />
+
+      {/* Compact Route Tracker Strip & Packet Launch Control */}
+      <div className="pointer-events-none absolute bottom-32 md:bottom-4 left-3 right-3 sm:left-4 sm:right-4 flex flex-col items-center gap-2 z-20">
+        {statusCue && (
+          <div
+            className={`px-3.5 py-2 rounded-xl border text-xs font-medium flex items-center gap-2 shadow-lg ${
+              statusCue.type === 'error'
+                ? 'bg-rose-950/95 border-rose-400 text-rose-100'
+                : statusCue.type === 'ok'
+                  ? 'bg-emerald-950/95 border-emerald-400 text-emerald-100'
+                  : 'bg-slate-950/92 border-slate-700 text-slate-100'
+            }`}
+          >
+            {statusCue.type === 'error' ? (
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            ) : statusCue.type === 'ok' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <Radio className="w-4 h-4 text-amber-300 shrink-0" />
+            )}
+            <span>{statusCue.text}</span>
+          </div>
+        )}
+
+        <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-1.5 bg-slate-950/90 border border-white/15 rounded-2xl p-2 shadow-xl">
+          {ROUTE_STAGES.map((st, idx) => {
+            const done = activatedIds.includes(st.id);
+            const isNext = ROUTE_STAGES[activatedIds.length]?.id === st.id;
+            return (
+              <button
+                key={st.id}
+                type="button"
+                onClick={() => handleStationInteract(st.id)}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors flex items-center gap-1.5 ${
+                  done
+                    ? 'bg-emerald-600/25 border-emerald-400 text-emerald-200'
+                    : isNext
+                      ? 'bg-rose-600 border-rose-400 text-white'
+                      : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                }`}
+              >
+                <span className="font-mono opacity-75">0{idx + 1}</span>
+                <span>{st.label[lang]}</span>
+              </button>
+            );
+          })}
+
+          {activatedIds.length === 5 && !delivered && (
+            <button
+              type="button"
+              onClick={launchPacket}
+              disabled={packetFlying}
+              className="ml-1 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold shadow-sm transition-colors"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{lang === 'en' ? 'Launch Packet' : 'প্যাকেট পাঠান'}</span>
+            </button>
+          )}
+
+          {delivered && (
+            <span className="ml-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-xs font-bold">
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>{lang === 'en' ? 'Delivered!' : 'পৌঁছেছে!'}</span>
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

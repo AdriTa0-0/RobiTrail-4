@@ -1,0 +1,112 @@
+{
+  "entities": {
+    "Wallet": {
+      "title": "TokenWallet",
+      "description": "Server-managed player token balance and unlocked trail ledger.",
+      "type": "object",
+      "properties": {
+        "accountId": { "type": "string", "minLength": 4, "maxLength": 64 },
+        "balance": { "type": "integer" },
+        "welcomeRewardGranted": { "type": "boolean" },
+        "welcomeRewardAt": { "type": "string" },
+        "unlockedTrailIds": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["accountId", "balance", "welcomeRewardGranted", "updatedAt"]
+    },
+    "TokenPurchase": {
+      "title": "TokenPurchaseOrder",
+      "description": "Idempotent CaaS token purchase transaction state machine (pending -> confirmed | failed).",
+      "type": "object",
+      "properties": {
+        "externalTrxId": { "type": "string", "minLength": 8, "maxLength": 100 },
+        "walletKey": { "type": "string", "minLength": 16, "maxLength": 128 },
+        "accountId": { "type": "string", "minLength": 4, "maxLength": 64 },
+        "packageId": { "type": "string", "minLength": 4, "maxLength": 32 },
+        "tokens": { "type": "integer" },
+        "priceBdt": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "failed"] },
+        "mode": { "type": "string", "enum": ["live_bdapps"] },
+        "providerStatusCode": { "type": "string", "maxLength": 64 },
+        "providerStatusDetail": { "type": "string", "maxLength": 240 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "settledAt": { "type": "string" }
+      },
+      "required": [
+        "externalTrxId",
+        "walletKey",
+        "accountId",
+        "packageId",
+        "tokens",
+        "priceBdt",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ProcessedKey": {
+      "title": "ProcessedIdempotencyKey",
+      "description": "Atomic duplicate-prevention marker written inside Firestore transactions.",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "minLength": 4, "maxLength": 160 },
+        "kind": { "type": "string", "enum": ["welcome", "unlock", "mistake", "purchase"] },
+        "externalTrxId": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["key", "kind", "createdAt"]
+    },
+    "PlayerAccount": {
+      "title": "PlayerAccount",
+      "description": "Server-managed RobiTrail verified player profile.",
+      "type": "object",
+      "properties": {
+        "accountId": { "type": "string", "minLength": 4, "maxLength": 64 },
+        "maskedPhone": { "type": "string", "maxLength": 32 },
+        "displayName": { "type": "string", "maxLength": 60 },
+        "completedTrailIds": { "type": "array" },
+        "certificateIds": { "type": "array" },
+        "preferredLang": { "type": "string", "enum": ["en", "bn"] },
+        "preferredCityId": { "type": "string", "enum": ["chattogram", "dhaka", "sylhet"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["accountId", "maskedPhone", "displayName", "createdAt", "updatedAt"]
+    },
+    "SubscriptionStatus": {
+      "title": "SubscriptionAuditRecord",
+      "description": "Provider subscription notification & status audit state.",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "maxLength": 64 },
+        "mode": { "type": "string", "enum": ["preview", "production"] },
+        "entitlementActive": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["status", "mode", "entitlementActive", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/wallets/{walletKey}": {
+      "schema": { "$ref": "#/entities/Wallet" },
+      "description": "Atomic server-managed token balances keyed by hashed MSISDN."
+    },
+    "/tokenPurchases/{trxId}": {
+      "schema": { "$ref": "#/entities/TokenPurchase" },
+      "description": "CaaS token purchase state machine keyed by unique externalTrxId."
+    },
+    "/processedKeys/{keyHash}": {
+      "schema": { "$ref": "#/entities/ProcessedKey" },
+      "description": "Idempotency lock records ensuring zero duplicate credits or charges."
+    },
+    "/accounts/{walletKey}": {
+      "schema": { "$ref": "#/entities/PlayerAccount" },
+      "description": "Server-managed player profile records."
+    },
+    "/subscriptions/{walletKey}": {
+      "schema": { "$ref": "#/entities/SubscriptionStatus" },
+      "description": "Server-managed carrier subscription audit state."
+    }
+  }
+}

@@ -1,0 +1,63 @@
+@import "tailwindcss" source(none);
+@source "../src";
+
+@layer base {
+  :root {
+    --font-display: 'Outfit', 'Hind Siliguri', sans-serif;
+    --font-sans: 'Plus Jakarta Sans', 'Hind Siliguri', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    --robi-crimson: #E11D48;
+    --robi-crimson-deep: #9F1239;
+    --robi-amber: #D97706;
+    --surface-paper: #FAF8F5;
+    --surface-ink: #111827;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 4.5rem;
+    font-family: var(--font-sans);
+    background-color: var(--surface-paper);
+    color: var(--surface-ink);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+    line-height: 1.28;
+  }
+
+  .font-mono-num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes marquee-scroll {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: marquee-scroll 34s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee {
+    animation: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
