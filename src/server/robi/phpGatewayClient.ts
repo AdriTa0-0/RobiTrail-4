@@ -16,7 +16,7 @@ export function getPhpGatewayConfig(): PhpGatewayConfig {
   const phpBaseUrl = (env.BDAPPS_PHP_BASE_URL || "").trim().replace(/\/+$/, "");
   const sharedSecret = (env.PHP_GATEWAY_SHARED_SECRET || "").trim();
   const callbackSharedSecret = (env.NODE_CALLBACK_SHARED_SECRET || sharedSecret).trim();
-  const appId = (env.BDAPPS_APP_ID || "APP_140847").trim();
+  const appId = (env.BDAPPS_APP_ID || "APP_140851").trim();
   const mode: "preview" | "production" =
     env.BDAPPS_MODE === "production" ? "production" : "preview";
   const liveChargingEnabled = env.BDAPPS_LIVE_CHARGING_ENABLED === "true";
