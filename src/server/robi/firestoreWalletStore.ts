@@ -1180,3 +1180,30 @@ export async function fsDeleteAccountData(
     };
   }, options);
 }
+
+export async function testFirestoreReadConnection(): Promise<{
+  connected: boolean;
+  projectId: string;
+  databaseId: string;
+}> {
+  const { projectId, databaseId } = getFirestoreTargetConfig();
+
+  // A read-only transaction; no documents are created or modified.
+  await runFirestoreTransaction(async ({ getDoc }) => {
+    await getDoc<Record<string, unknown>>(
+      "integration_tests",
+      "local_php"
+    );
+
+    return {
+      result: null,
+      writes: [],
+    };
+  });
+
+  return {
+    connected: true,
+    projectId,
+    databaseId,
+  };
+}
