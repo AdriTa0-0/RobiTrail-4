@@ -1,0 +1,19 @@
+
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "robitrail-4",
+  "main": ".output/server/index.mjs",
+  "compatibility_date": "2026-11-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".output/public",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "BDAPPS_APP_ID": "APP_140851",
+    "BDAPPS_PHP_BASE_URL": "https://bdappsdigitalapps.com/auw26/RobiTrail",
+    "FIREBASE_PROJECT_ID": "robitrail-4",
+    "FIRESTORE_DATABASE_ID": "(default)",
+    "BDAPPS_MODE": "preview"
+  }
+}
