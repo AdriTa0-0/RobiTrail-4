@@ -287,3 +287,15 @@ export async function unsubscribeViaPhpGateway(msisdn: string, fetcher?: typeof 
     statusDetail?: string;
   }>("subscription_unsubscribe.php", { msisdn }, fetcher);
 }
+
+export async function testPhpGatewayConnection() {
+  return callPhpGateway<{
+    ok: boolean;
+    message?: string;
+    service?: string;
+    errorCode?: string;
+  }>("gateway_test.php", {
+    test: "cloudflare_php_connection"
+  });
+}
+
