@@ -12,7 +12,7 @@
   "vars": {
     "BDAPPS_APP_ID": "APP_140851",
     "BDAPPS_PHP_BASE_URL": "https://bdappsdigitalapps.com/auw26/RobiTrail",
-    "FIREBASE_PROJECT_ID": "robitrail-4",
+    "FIREBASE_PROJECT_ID": "robitrail-c9e88",
     "FIRESTORE_DATABASE_ID": "(default)",
     "BDAPPS_MODE": "preview"
   }
