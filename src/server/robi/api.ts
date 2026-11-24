@@ -313,10 +313,33 @@ app.post("/api/bdapps/otp/request", async (req, res) => {
         res.status(429).json({ error: "Please wait before requesting another OTP.", retryAfterSeconds: created.retryAfterSeconds });
         return;
       }
-      // This invokes ONLY /sms/send, never bdapps /otp/request or /otp/verify.
-      const sent = await sendSmsViaPhpGateway(msisdn, `RobiTrail login code: ${code}. Valid for 5 minutes. Do not share this code.`);
-      const accepted = sent.ok && sent.data?.statusCode === "S1000";
-      await fsMarkLoginOtpSent(referenceNo, accepted);
+// This invokes ONLY /sms/send, never bdapps /otp/request or /otp/verify.
+let sent: Awaited<ReturnType<typeof sendSmsViaPhpGateway>>;
+
+try {
+  sent = await sendSmsViaPhpGateway(
+    msisdn,
+    `RobiTrail login code: ${code}. Valid for 5 minutes. Do not share this code.`
+  );
+} catch (smsError) {
+  // Delivery status is unknown. Keep the rate-limit reservation
+  // rather than refunding an SMS that might have been accepted.
+  console.error("[RobiTrail SMS OTP transport error]", {
+    referenceNo,
+    error:
+      smsError instanceof Error
+        ? smsError.message
+        : "Unknown SMS transport error",
+  });
+
+  res.status(503).json({
+    error: "SMS provider connection failed. Delivery status is unknown.",
+  });
+  return;
+}
+
+const accepted = sent.ok && sent.data?.statusCode === "S1000";
+await fsMarkLoginOtpSent(referenceNo, accepted);
 
 if (!accepted) {
   const statusCode = String(
