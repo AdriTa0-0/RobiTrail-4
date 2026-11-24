@@ -41,7 +41,12 @@ export function isFreeIntroTrail(trailOrId: string | TrailConfig | undefined | n
 }
 
 export function findFreeIntroTrail(): TrailConfig | undefined {
-  return TRAILS.find((tr) => isFreeIntroTrail(tr));
+  return (
+    TRAILS.find((tr) => {
+      const enTitle = tr.title.en.trim().toLowerCase();
+      return enTitle === "the message journey" || enTitle.includes("message journey");
+    }) || TRAILS.find((tr) => isFreeIntroTrail(tr))
+  );
 }
 
 export function getConfigurableAccessConfig(): ConfigurableGameAccessMap {
@@ -121,8 +126,8 @@ export function resolveTrailAccess(params: {
   const alreadyCompletedByPlayer = completedTrailIds.includes(trail.id);
   const alreadyUnlockedByPlayer = unlockedTrailIds.includes(trail.id) || subscriptionActive;
 
-  // Rule: "The Message Journey" is 100% free forever with zero registration/token barrier
-  if (tier === "free_intro") {
+  // Rule: "The Message Journey" and "Harbour Packet Chase" (ctg-3) are 100% free with zero registration/token barrier
+  if (tier === "free_intro" || isFreeIntroTrail(trail) || trail.id === "ctg-3") {
     return {
       tier: "free_intro",
       accessible: true,
