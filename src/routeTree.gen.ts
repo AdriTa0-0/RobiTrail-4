@@ -25,15 +25,19 @@ const SplatRoute = SplatRouteImport.update({
   path: '/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiFirestoreTestRoute = ApiFirestoreTestRouteImport.update({
-  id: '/api/firestore-test', path: '/api/firestore-test', getParentRoute: () => rootRouteImport,
-} as any)
-const ApiGatewayTestRoute = ApiGatewayTestRouteImport.update({
-  id: '/api/gateway-test', path: '/api/gateway-test', getParentRoute: () => rootRouteImport,
-} as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiFirestoreTestRoute = ApiFirestoreTestRouteImport.update({
+  id: '/api/firestore-test',
+  path: '/api/firestore-test',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGatewayTestRoute = ApiGatewayTestRouteImport.update({
+  id: '/api/gateway-test',
+  path: '/api/gateway-test',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -64,7 +68,13 @@ export interface FileRouteTypes {
   fullPaths: '/' | '/$' | '/api/$' | '/api/firestore-test' | '/api/gateway-test'
   fileRoutesByTo: FileRoutesByTo
   to: '/' | '/$' | '/api/$' | '/api/firestore-test' | '/api/gateway-test'
-  id: '__root__' | '/' | '/$' | '/api/$' | '/api/firestore-test' | '/api/gateway-test'
+  id:
+    | '__root__'
+    | '/'
+    | '/$'
+    | '/api/$'
+    | '/api/firestore-test'
+    | '/api/gateway-test'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
