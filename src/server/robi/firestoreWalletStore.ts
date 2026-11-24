@@ -1258,33 +1258,160 @@ interface LoginOtpDoc {
 }
 const OTP_COLLECTION = "robitrail_login_otp";
 const OTP_RATE_COLLECTION = "robitrail_otp_rate";
+const OTP_MAX_PROVIDER_FAILURES_PER_DAY = 10;
 
 export async function fsCreateLoginOtp(referenceNo: string, msisdn: string, codeHash: string, options?: FirestoreAdapterOptions): Promise<{ allowed: boolean; retryAfterSeconds?: number }> {
   const now = Date.now();
   return runFirestoreTransaction<{ allowed: boolean; retryAfterSeconds?: number }>(async ({ getDoc }) => {
     const rateId = hashWalletKey(msisdn);
-    const rate = await getDoc<{ lastRequestedAt: number; windowStart: number; windowCount: number }>(OTP_RATE_COLLECTION, rateId);
+   const rate = await getDoc<{
+  lastRequestedAt: number;
+  windowStart: number;
+  windowCount: number;
+  providerFailureCount?: number;
+  pendingRequestCount?: number;
+}>(OTP_RATE_COLLECTION, rateId);
     const windowStart = now - (rate.data?.windowStart || 0) < 86_400_000 ? (rate.data?.windowStart || now) : now;
     const windowCount = windowStart === rate.data?.windowStart ? (rate.data?.windowCount || 0) : 0;
-    if (windowCount >= 10) return { result: { allowed: false, retryAfterSeconds: Math.ceil((windowStart + 86_400_000 - now) / 1000) }, writes: [] };
+    const pendingRequestCount =
+  windowStart === rate.data?.windowStart
+    ? (rate.data?.pendingRequestCount || 0)
+    : 0;
+    const providerFailureCount =
+  windowStart === rate.data?.windowStart
+    ? (rate.data?.providerFailureCount || 0)
+    : 0;
+    // Reserve at most 10 OTP requests per 24-hour window.
+// Provider failures are tracked separately, but do not
+// release reservations until the full accounting is implemented.
+if (windowCount >= 10) {
+  return {
+    result: {
+      allowed: false,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((windowStart + 86_400_000 - now) / 1000)
+      ),
+    },
+    writes: [],
+  };
+}
+    if (providerFailureCount >= OTP_MAX_PROVIDER_FAILURES_PER_DAY) {
+  return {
+    result: {
+      allowed: false,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((windowStart + 86_400_000 - now) / 1000)
+      ),
+    },
+    writes: [],
+  };
+}
     const delay = 60_000 - (now - (rate.data?.lastRequestedAt || 0));
     if (delay > 0) return { result: { allowed: false, retryAfterSeconds: Math.ceil(delay / 1000) }, writes: [] };
     const challenge: LoginOtpDoc = { msisdn, codeHash, expiresAt: now + 300_000, attempts: 0, used: false, sent: false, createdAt: now };
     return { result: { allowed: true }, writes: [
       { update: { name: docPath(OTP_COLLECTION, safeDocId(referenceNo)), fields: encodeFields(challenge as unknown as Record<string, unknown>) }, currentDocument: { exists: false } },
-      { update: { name: docPath(OTP_RATE_COLLECTION, rateId), fields: encodeFields({ lastRequestedAt: now, windowStart, windowCount: windowCount + 1 }) }, currentDocument: rate.updateTime ? { updateTime: rate.updateTime } : { exists: false } },
+      { update: { name: docPath(OTP_RATE_COLLECTION, rateId), fields: encodeFields({
+  lastRequestedAt: now,
+  windowStart,
+  windowCount: windowCount + 1,
+  providerFailureCount,
+  pendingRequestCount: pendingRequestCount + 1,
+}) }, currentDocument: rate.updateTime ? { updateTime: rate.updateTime } : { exists: false } },
     ] };
  }, options);
 }
 
-export async function fsMarkLoginOtpSent(referenceNo: string, sent: boolean, options?: FirestoreAdapterOptions): Promise<void> {
+
+export async function fsMarkLoginOtpSent(
+  referenceNo: string,
+  sent: boolean,
+  options?: FirestoreAdapterOptions
+): Promise<void> {
   await runFirestoreTransaction(async ({ getDoc }) => {
     const id = safeDocId(referenceNo);
     const current = await getDoc<LoginOtpDoc>(OTP_COLLECTION, id);
-    if (!current.data || current.data.used) return { result: undefined, writes: [] };
-    return { result: undefined, writes: [{ update: { name: docPath(OTP_COLLECTION, id), fields: encodeFields({ ...current.data, sent, used: !sent }) }, currentDocument: { updateTime: current.updateTime } }] };
- }, options);
+
+    if (!current.data || current.data.used || current.data.sent) {
+      return { result: undefined, writes: [] };
+    }
+
+    const writes: Array<{
+      update: {
+        name: string;
+        fields: Record<string, FsValue>;
+      };
+      currentDocument?: {
+        exists?: boolean;
+        updateTime?: string;
+      };
+    }> = [
+      {
+        update: {
+          name: docPath(OTP_COLLECTION, id),
+          fields: encodeFields({
+            ...current.data,
+            sent,
+            used: !sent,
+          }),
+        },
+        currentDocument: {
+          updateTime: current.updateTime,
+        },
+      },
+    ];
+
+    {
+      const rateId = hashWalletKey(current.data.msisdn);
+
+      const rate = await getDoc<{
+        lastRequestedAt: number;
+        windowStart: number;
+        windowCount: number;
+        providerFailureCount?: number;
+        pendingRequestCount?: number;
+      }>(OTP_RATE_COLLECTION, rateId);
+
+      if (rate.data) {
+        const sameWindow =
+          rate.data.windowStart <= current.data.createdAt &&
+          current.data.createdAt < rate.data.windowStart + 86_400_000;
+
+        if (sameWindow) {
+          writes.push({
+            update: {
+              name: docPath(OTP_RATE_COLLECTION, rateId),
+fields: encodeFields({
+  ...rate.data,
+  windowCount: sent
+    ? rate.data.windowCount
+    : Math.max(0, (rate.data.windowCount || 0) - 1),
+  pendingRequestCount: Math.max(
+    0,
+    (rate.data.pendingRequestCount || 0) - 1
+  ),
+  providerFailureCount: sent
+    ? (rate.data.providerFailureCount || 0)
+    : (rate.data.providerFailureCount || 0) + 1,
+}),
+            },
+            currentDocument: {
+              updateTime: rate.updateTime,
+            },
+          });
+        }
+      }
+    }
+
+    return {
+      result: undefined,
+      writes,
+    };
+  }, options);
 }
+
 
 export async function fsConsumeLoginOtp(referenceNo: string, codeHash: string, options?: FirestoreAdapterOptions): Promise<{ ok: boolean; msisdn?: string; reason: string }> {
   return runFirestoreTransaction(async ({ getDoc }) => {
