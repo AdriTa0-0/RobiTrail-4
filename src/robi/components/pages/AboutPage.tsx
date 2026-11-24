@@ -117,7 +117,7 @@ const TOOL_GROUPS: {
     titleBn: "ডিজাইন ও পরিকল্পনা",
     noteBn: "ইন্টারফেস পরিকল্পনা, ভিজ্যুয়াল কম্পোজিশন ও প্রোটোটাইপিং।",
     tools: [
-      { name: "Canva", slug: "canva", color: "#00C4CC" },
+      { name: "Canva", color: "#00C4CC" },
       { name: "Figma", slug: "figma", color: "#F24E1E" },
     ],
   },
