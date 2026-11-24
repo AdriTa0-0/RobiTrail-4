@@ -31,8 +31,13 @@ export function isFreeIntroTrail(trailOrId: string | TrailConfig | undefined | n
   const trail =
     typeof trailOrId === "string" ? TRAILS.find((tr) => tr.id === trailOrId) : trailOrId;
   if (!trail) return false;
+  if (trail.id === "ctg-3") return true;
   const enTitle = trail.title.en.trim().toLowerCase();
-  return enTitle === "the message journey" || enTitle.includes("message journey");
+  return (
+    enTitle === "the message journey" ||
+    enTitle.includes("message journey") ||
+    enTitle.includes("harbour packet chase")
+  );
 }
 
 export function findFreeIntroTrail(): TrailConfig | undefined {
