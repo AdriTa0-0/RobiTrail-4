@@ -317,10 +317,33 @@ app.post("/api/bdapps/otp/request", async (req, res) => {
       const sent = await sendSmsViaPhpGateway(msisdn, `RobiTrail login code: ${code}. Valid for 5 minutes. Do not share this code.`);
       const accepted = sent.ok && sent.data?.statusCode === "S1000";
       await fsMarkLoginOtpSent(referenceNo, accepted);
-      if (!accepted) {
-        res.status(503).json({ error: "SMS could not be accepted by the provider. Please try again later.", statusCode: sent.data?.statusCode || "SMS_UNAVAILABLE" });
-        return;
-      }
+
+if (!accepted) {
+  const statusCode = String(
+    sent.data?.statusCode || "SMS_UNAVAILABLE"
+  );
+
+  const upstreamHttpStatus = sent.httpStatus;
+
+  const providerDetail = String(
+    sent.data?.statusDetail || sent.error || ""
+  );
+
+  console.error("[RobiTrail SMS OTP failure]", {
+    statusCode,
+    upstreamHttpStatus,
+    providerDetail,
+  });
+
+  res.status(503).json({
+    error: "SMS provider rejected the verification request.",
+    statusCode,
+    upstreamHttpStatus,
+    // Do not expose raw provider details to the browser.
+  });
+  return;
+}
+
       res.json({ mode: "production", referenceNo, maskedNumber: maskMsisdn(msisdn), expiresInSeconds: 300, notice: "SMS request accepted by provider. Delivery is not yet confirmed." });
     } catch {
       res.status(503).json({ error: "SMS login is temporarily unavailable." });
