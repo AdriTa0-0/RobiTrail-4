@@ -75,7 +75,7 @@ export const ExploreCitiesSection: React.FC<{ onEnterCityView: () => void }> = (
           <div className="relative flex-1 flex items-center justify-center py-2">
             <div className="relative w-full max-w-[380px] rounded-xl overflow-hidden shadow-inner ring-1 ring-white/10">
               <img
-                src="/assets/aistudio/WhatsApp_Image_2026-11-22_at_8.44.15_AM_7b96dd4c.jpeg"
+                src="/assets/Bangladesh_map.jpeg"
                 alt={
                   lang === "en"
                     ? "Map of Bangladesh highlighting Dhaka, Chattogram, and Sylhet"
