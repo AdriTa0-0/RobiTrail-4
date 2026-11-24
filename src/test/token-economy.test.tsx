@@ -345,11 +345,8 @@ describe("RobiTrail Tokens Economy & Access System", () => {
     const { waitFor } = await import("@testing-library/react");
     renderWithProviders(<TokenCenterPage />);
     await waitFor(() => {
-      expect(
-        screen.getByText(/Preview Payment Simulation — No real mobile balance will be charged/i),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /Token Center/i })).toBeInTheDocument();
     });
-    expect(screen.getByRole("heading", { name: /Token Center/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /How Tokens Work/i })).toBeInTheDocument();
     expect(screen.getByText("6 Tokens")).toBeInTheDocument();
     expect(screen.getByText("BDT 2")).toBeInTheDocument();

@@ -110,23 +110,6 @@ export const TokenShop: React.FC<{ onPurchaseComplete?: () => void }> = ({
         </div>
       </div>
 
-      {/* Honest Preview / Simulation Banner */}
-      <div className="rounded-xl bg-amber-50/80 border border-amber-200 px-4 py-3 flex items-start gap-3">
-        <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-        <div className="text-xs text-amber-950 space-y-0.5">
-          <div className="font-bold">
-            {lang === "bn"
-              ? "প্রিভিউ পেমেন্ট সিমুলেশন — আসল ব্যালেন্স থেকে টাকা কাটা হবে না"
-              : "Preview Payment Simulation — No real mobile balance will be charged"}
-          </div>
-          <p className="text-amber-900/90 leading-relaxed">
-            {lang === "bn"
-              ? "লাইভ হলে রবি মোবাইল ব্যালেন্স থেকে চার্জ করা হবে। বর্তমানে প্রিভিউ মোডে নিরাপদে টোকেন ক্রয় পরীক্ষা করতে পারেন।"
-              : "When live, purchases charge directly from your Robi mobile balance. In Preview Mode you can safely simulate the full checkout experience."}
-          </p>
-        </div>
-      </div>
-
       {/* Exact 6 Token Packages Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {packages.map((pkg) => {
