@@ -31,12 +31,14 @@ export function isFreeIntroTrail(trailOrId: string | TrailConfig | undefined | n
   const trail =
     typeof trailOrId === "string" ? TRAILS.find((tr) => tr.id === trailOrId) : trailOrId;
   if (!trail) return false;
-  if (trail.id === "ctg-3") return true;
+  if (trail.id === "ctg-1" || trail.id === "ctg-3") return true;
   const enTitle = trail.title.en.trim().toLowerCase();
   return (
     enTitle === "the message journey" ||
     enTitle.includes("message journey") ||
-    enTitle.includes("harbour packet chase")
+    enTitle.includes("harbour packet chase") ||
+    enTitle.includes("the missing signal case") ||
+    enTitle.includes("robi sheba")
   );
 }
 
@@ -126,8 +128,9 @@ export function resolveTrailAccess(params: {
   const alreadyCompletedByPlayer = completedTrailIds.includes(trail.id);
   const alreadyUnlockedByPlayer = unlockedTrailIds.includes(trail.id) || subscriptionActive;
 
-  // Rule: "The Message Journey" and "Harbour Packet Chase" (ctg-3) are 100% free with zero registration/token barrier
-  if (tier === "free_intro" || isFreeIntroTrail(trail) || trail.id === "ctg-3") {
+  // Rule: Introductory trails ("The Message Journey", "Harbour Packet Chase", and "Robi Sheba — The Missing Signal Case")
+  // are 100% free with zero registration or token barrier.
+  if (tier === "free_intro" || isFreeIntroTrail(trail) || trail.id === "ctg-1" || trail.id === "ctg-3") {
     return {
       tier: "free_intro",
       accessible: true,
