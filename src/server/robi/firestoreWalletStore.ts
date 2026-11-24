@@ -5,6 +5,7 @@ import {
   sanitizeTrailIds,
   VALID_TRAIL_IDS,
   type PlayerAccountRecord,
+  type CertificateRecord,
   type PublicTokenWallet,
   type SubscriptionRecord,
   type TokenTransactionRecord,
@@ -889,6 +890,9 @@ export async function fsSettlePurchaseTransaction(
   meta: {
     providerStatusCode?: string;
     providerStatusDetail?: string;
+    callbackMsisdn?: string;
+    callbackAmountBdt?: string;
+    callbackCurrency?: string;
   } = {},
   options?: FirestoreAdapterOptions,
 ): Promise<{
@@ -928,6 +932,16 @@ export async function fsSettlePurchaseTransaction(
     }
 
     const order = trxSnap.data;
+    if (meta.callbackMsisdn !== undefined && meta.callbackMsisdn !== order.msisdn) {
+      throw new Error("Charging callback subscriber did not match the pending order.");
+    }
+    if (meta.callbackAmountBdt !== undefined &&
+       (!Number.isFinite(Number(meta.callbackAmountBdt)) || Math.abs(Number(meta.callbackAmountBdt) - order.priceBdt) > 0.001)) {
+      throw new Error("Charging callback amount does not match pending order.");
+    }
+    if (meta.callbackCurrency !== undefined && meta.callbackCurrency.toUpperCase() !== "BDT") {
+      throw new Error("Charging callback currency does not match pending order.");
+    }
     const walletSnap = await getDoc<TokenWalletRecord>("wallets", order.walletKey);
     const now = new Date().toISOString();
     const wallet: TokenWalletRecord = walletSnap.data || {
@@ -1158,6 +1172,27 @@ export async function fsGetSubscription(
   }, options);
 }
 
+/** Public verification reads from authoritative Firestore, never Worker RAM. */
+export async function fsGetCertificate(id: string, options?: FirestoreAdapterOptions): Promise<CertificateRecord | null> {
+  if (!/^RT-PROTO-[A-F0-9]{8}$/.test(id)) return null;
+  return runFirestoreTransaction(async ({ getDoc }) => {
+    const snap = await getDoc<CertificateRecord>("certificates", safeDocId(id));
+    return { result: snap.data, writes: [] };
+  }, options);
+}
+
+export async function fsSaveCertificate(record: CertificateRecord, options?: FirestoreAdapterOptions): Promise<CertificateRecord> {
+  return runFirestoreTransaction(async ({ getDoc }) => {
+    const id = safeDocId(record.certificateId);
+    const snap = await getDoc<CertificateRecord>("certificates", id);
+    if (snap.data) throw new Error("Certificate ID already exists.");
+    return { result: record, writes: [{
+      update: { name: docPath("certificates", id), fields: encodeFields(record as unknown as Record<string, unknown>) },
+      currentDocument: { exists: false },
+    }] };
+  }, options);
+}
+
 export async function fsDeleteAccountData(
   msisdn: string,
   options?: FirestoreAdapterOptions,
@@ -1176,6 +1211,7 @@ export async function fsDeleteAccountData(
         { delete: docPath("accounts", walletKey) },
         { delete: docPath("subscriptions", walletKey) },
         { delete: docPath("wallets", walletKey) },
+        ...(accSnap.data?.certificateIds || []).filter((id) => /^RT-PROTO-[A-F0-9]{8}$/.test(id)).map((id) => ({ delete: docPath("certificates", safeDocId(id)) })),
       ],
     };
   }, options);
@@ -1206,4 +1242,64 @@ export async function testFirestoreReadConnection(): Promise<{
     projectId,
     databaseId,
   };
+}
+
+
+// Subscription-independent login OTP challenges. Firestore transactions make attempts
+// and one-time consumption consistent across Cloudflare Worker instances.
+interface LoginOtpDoc {
+  msisdn: string;
+  codeHash: string;
+  expiresAt: number;
+  attempts: number;
+  used: boolean;
+  sent: boolean;
+  createdAt: number;
+}
+const OTP_COLLECTION = "robitrail_login_otp";
+const OTP_RATE_COLLECTION = "robitrail_otp_rate";
+
+export async function fsCreateLoginOtp(referenceNo: string, msisdn: string, codeHash: string, options?: FirestoreAdapterOptions): Promise<{ allowed: boolean; retryAfterSeconds?: number }> {
+  const now = Date.now();
+  return runFirestoreTransaction<{ allowed: boolean; retryAfterSeconds?: number }>(async ({ getDoc }) => {
+    const rateId = hashWalletKey(msisdn);
+    const rate = await getDoc<{ lastRequestedAt: number; windowStart: number; windowCount: number }>(OTP_RATE_COLLECTION, rateId);
+    const windowStart = now - (rate.data?.windowStart || 0) < 86_400_000 ? (rate.data?.windowStart || now) : now;
+    const windowCount = windowStart === rate.data?.windowStart ? (rate.data?.windowCount || 0) : 0;
+    if (windowCount >= 10) return { result: { allowed: false, retryAfterSeconds: Math.ceil((windowStart + 86_400_000 - now) / 1000) }, writes: [] };
+    const delay = 60_000 - (now - (rate.data?.lastRequestedAt || 0));
+    if (delay > 0) return { result: { allowed: false, retryAfterSeconds: Math.ceil(delay / 1000) }, writes: [] };
+    const challenge: LoginOtpDoc = { msisdn, codeHash, expiresAt: now + 300_000, attempts: 0, used: false, sent: false, createdAt: now };
+    return { result: { allowed: true }, writes: [
+      { update: { name: docPath(OTP_COLLECTION, safeDocId(referenceNo)), fields: encodeFields(challenge as unknown as Record<string, unknown>) }, currentDocument: { exists: false } },
+      { update: { name: docPath(OTP_RATE_COLLECTION, rateId), fields: encodeFields({ lastRequestedAt: now, windowStart, windowCount: windowCount + 1 }) }, currentDocument: rate.updateTime ? { updateTime: rate.updateTime } : { exists: false } },
+    ] };
+ }, options);
+}
+
+export async function fsMarkLoginOtpSent(referenceNo: string, sent: boolean, options?: FirestoreAdapterOptions): Promise<void> {
+  await runFirestoreTransaction(async ({ getDoc }) => {
+    const id = safeDocId(referenceNo);
+    const current = await getDoc<LoginOtpDoc>(OTP_COLLECTION, id);
+    if (!current.data || current.data.used) return { result: undefined, writes: [] };
+    return { result: undefined, writes: [{ update: { name: docPath(OTP_COLLECTION, id), fields: encodeFields({ ...current.data, sent, used: !sent }) }, currentDocument: { updateTime: current.updateTime } }] };
+ }, options);
+}
+
+export async function fsConsumeLoginOtp(referenceNo: string, codeHash: string, options?: FirestoreAdapterOptions): Promise<{ ok: boolean; msisdn?: string; reason: string }> {
+  return runFirestoreTransaction(async ({ getDoc }) => {
+    const id = safeDocId(referenceNo);
+    const current = await getDoc<LoginOtpDoc>(OTP_COLLECTION, id);
+    const challenge = current.data;
+    if (!challenge || challenge.used || !challenge.sent || challenge.expiresAt < Date.now())
+      return { result: { ok: false, reason: "expired_or_missing" }, writes: [] };
+    if (challenge.attempts >= 5) return { result: { ok: false, reason: "too_many_attempts" }, writes: [] };
+    const storedHash = Buffer.from(challenge.codeHash, "hex");
+    const offeredHash = Buffer.from(codeHash, "hex");
+    const correct = storedHash.length === 32 && offeredHash.length === 32 && crypto.timingSafeEqual(storedHash, offeredHash);
+    const updated = { ...challenge, attempts: challenge.attempts + 1, used: correct || challenge.attempts + 1 >= 5 };
+    return { result: correct ? { ok: true, msisdn: challenge.msisdn, reason: "verified" } : { ok: false, reason: "invalid_code" }, writes: [
+      { update: { name: docPath(OTP_COLLECTION, id), fields: encodeFields(updated) }, currentDocument: { updateTime: current.updateTime } },
+    ] };
+ }, options);
 }

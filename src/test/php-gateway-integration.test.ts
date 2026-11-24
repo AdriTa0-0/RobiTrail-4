@@ -10,6 +10,11 @@ import {
   fsCreatePendingPurchase,
   fsGetOrInitWallet,
   fsSettlePurchaseTransaction,
+  fsCreateLoginOtp,
+  fsMarkLoginOtpSent,
+  fsConsumeLoginOtp,
+  fsSaveCertificate,
+  fsGetCertificate,
   type FirestoreAdapterOptions,
 } from "@/server/robi/firestoreWalletStore";
 import {
@@ -337,6 +342,66 @@ describe("PHP Gateway Auth, bdapps Safety Locks & Atomic Firestore Persistence",
     );
     expect(failed.purchase?.status).toBe("failed");
     expect(failed.wallet?.balance).toBe(6);
+  });
+
+  it("enforces Firestore SMS OTP cooldown, five-attempt lock, one-use verification, and cannot consume unsent OTP", async () => {
+    const store = createMockFirestoreRestHarness();
+    const number = "8801811223344";
+    const ref = "RT-123456ABCDEF";
+    const otp = "123456";
+    const correctHash = crypto.createHmac("sha256", "a".repeat(64)).update(`${ref}:${otp}`).digest("hex");
+    const incorrectHash = crypto.createHmac("sha256", "a".repeat(64)).update(`${ref}:654321`).digest("hex");
+    const created = await fsCreateLoginOtp(ref, number, correctHash, store.options);
+    expect(created.allowed).toBe(true);
+    const beforeSending = await fsConsumeLoginOtp(ref, correctHash, store.options);
+    expect(beforeSending.ok).toBe(false);
+    await fsMarkLoginOtpSent(ref, true, store.options);
+    const rateLimited = await fsCreateLoginOtp("RT-123456ABCDE0", number, correctHash, store.options);
+    expect(rateLimited.allowed).toBe(false);
+    expect(rateLimited.retryAfterSeconds).toBeGreaterThan(0);
+    for (let i=0;i<4;i++) {
+      const failed = await fsConsumeLoginOtp(ref, incorrectHash, store.options);
+      expect(failed.ok).toBe(false);
+    }
+    const accepted = await fsConsumeLoginOtp(ref, correctHash, store.options);
+    expect(accepted).toEqual({ ok: true, msisdn: number, reason: "verified" });
+    const replay = await fsConsumeLoginOtp(ref, correctHash, store.options);
+    expect(replay.ok).toBe(false);
+    const second = createMockFirestoreRestHarness();
+    await fsCreateLoginOtp(ref, number, correctHash, second.options);
+    await fsMarkLoginOtpSent(ref, true, second.options);
+    for (let i=0;i<5;i++) await fsConsumeLoginOtp(ref, incorrectHash, second.options);
+    expect((await fsConsumeLoginOtp(ref, correctHash, second.options)).ok).toBe(false);
+  });
+
+  it("stores certificates durably in Firestore and verifies after reads", async () => {
+    const store = createMockFirestoreRestHarness();
+    const certificate = {
+      certificateId: "RT-PROTO-AB12CD34", learnerName: "Test Explorer", completedTrailIds: ["ctg-1", "ctg-2", "ctg-3"],
+      scorePercent: 83, passed: true, issuedAt: "2026-11-24T00:00:00Z", prototypeLabel: "Educational prototype", ownerAccountId: "RTU-TEST000001",
+    };
+    const saved = await fsSaveCertificate(certificate, store.options);
+    expect(saved.certificateId).toBe(certificate.certificateId);
+    const retrieved = await fsGetCertificate(certificate.certificateId, store.options);
+    expect(retrieved?.learnerName).toBe(certificate.learnerName);
+    expect(await fsGetCertificate("not-a-certificate-id", store.options)).toBeNull();
+  });
+
+  it("rejects carrier callbacks whose subscriber or amount does not match a pending purchase", async () => {
+    const store = createMockFirestoreRestHarness();
+    await fsCreatePendingPurchase("8801811223344", "RTU-TEST000001", {
+      externalTrxId: "CAAS-ORDER-UNSAFE", packageId: "pkg-6", tokens: 6, priceBdt: 2,
+    }, store.options);
+    await expect(fsSettlePurchaseTransaction("CAAS-ORDER-UNSAFE", "confirmed", {
+      callbackMsisdn: "8801811000000", callbackAmountBdt: "2", callbackCurrency: "BDT",
+    }, store.options)).rejects.toThrow(/subscriber/);
+    await expect(fsSettlePurchaseTransaction("CAAS-ORDER-UNSAFE", "confirmed", {
+      callbackMsisdn: "8801811223344", callbackAmountBdt: "20", callbackCurrency: "BDT",
+    }, store.options)).rejects.toThrow(/amount/);
+    const safe = await fsSettlePurchaseTransaction("CAAS-ORDER-UNSAFE", "confirmed", {
+      callbackMsisdn: "8801811223344", callbackAmountBdt: "2", callbackCurrency: "BDT",
+    }, store.options);
+    expect(safe.wallet?.balance).toBe(6);
   });
 
   it("keeps OTP strictly separate from paid subscriptions and rejects unauthorized internal callbacks", async () => {

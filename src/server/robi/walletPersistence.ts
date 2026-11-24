@@ -7,6 +7,9 @@ import {
   recordMistakePenalty,
   recordTokenPurchaseTransaction,
   saveSubscription,
+  saveCertificate,
+  getCertificate,
+  type CertificateRecord,
   toPublicWallet,
   unlockGameWithTokens,
   upsertAccount,
@@ -28,6 +31,8 @@ import {
   fsUnlockGameWithTokens,
   fsUpsertAccount,
   isFirestorePersistenceConfigured,
+  fsSaveCertificate,
+  fsGetCertificate,
   type TokenPurchaseOrderRecord,
 } from "./firestoreWalletStore";
 import { getPhpGatewayConfig } from "./phpGatewayClient";
@@ -204,6 +209,9 @@ export async function settleLivePurchase(
   meta: {
     providerStatusCode?: string;
     providerStatusDetail?: string;
+    callbackMsisdn?: string;
+    callbackAmountBdt?: string;
+    callbackCurrency?: string;
   } = {},
 ) {
   assertProductionPersistenceReady();
@@ -232,4 +240,17 @@ export async function deleteAccountData(msisdn: string): Promise<boolean> {
   }
   assertProductionPersistenceReady();
   return fsDeleteAccountData(msisdn);
+}
+
+/** Same certificate backing store as accounts: Firestore in production, RAM preview only. */
+export async function persistCertificate(record: CertificateRecord): Promise<CertificateRecord> {
+  if (!isProductionMode()) return saveCertificate(record);
+  assertProductionPersistenceReady();
+  return fsSaveCertificate(record);
+}
+
+export async function loadCertificate(id: string): Promise<CertificateRecord | null> {
+  if (!isProductionMode()) return getCertificate(id);
+  assertProductionPersistenceReady();
+  return fsGetCertificate(id);
 }

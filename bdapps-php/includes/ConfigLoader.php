@@ -12,6 +12,7 @@ final class ConfigLoader
         $example = require dirname(__DIR__) . '/config.example.php';
 
         $candidatePaths = [];
+        $privateConfigPath = null;
         $envPath = getenv('ROBITRAIL_BDAPPS_CONFIG');
         if (is_string($envPath) && $envPath !== '') {
             $candidatePaths[] = $envPath;
@@ -23,7 +24,8 @@ final class ConfigLoader
         $parent = dirname(__DIR__);
         for ($depth = 0; $depth < 12; $depth++) {
             if (basename($parent) === 'public_html') {
-                $candidatePaths[] = dirname($parent) . '/private/robitrail_bdapps_config.php';
+                $privateConfigPath = dirname($parent) . '/private/robitrail_bdapps_config.php';
+                $candidatePaths[] = $privateConfigPath;
                 break;
             }
             $next = dirname($parent);
@@ -33,6 +35,21 @@ final class ConfigLoader
             $parent = $next;
         }
         // For nonstandard document roots, set ROBITRAIL_BDAPPS_CONFIG explicitly.
+
+        // One-time, best-effort migration from older deployments that stored secrets inside webroot.
+        // Never include these secrets in any export/release ZIP.
+        $legacyConfigPath = dirname(__DIR__) . '/robitrail_bdapps_config.php';
+        if (is_file($legacyConfigPath) && is_string($privateConfigPath)) {
+            $privateDir = dirname($privateConfigPath);
+            if ((is_dir($privateDir) || @mkdir($privateDir, 0700, true)) && !is_file($privateConfigPath)) {
+                if (@rename($legacyConfigPath, $privateConfigPath)) {
+                    @chmod($privateConfigPath, 0600);
+                }
+            }
+        }
+        // On hosts disallowing rename, keep the old config accessible to PHP only. Apache
+        // must deny HTTP requests to this path via .htaccess until it can be migrated.
+        $candidatePaths[] = $legacyConfigPath;
 
         $loadedOverride = [];
         $configSource = 'env_or_defaults';
@@ -49,6 +66,24 @@ final class ConfigLoader
         }
 
         $merged = array_replace_recursive($example, $loadedOverride);
+
+        // This release deliberately enables only the non-subscription SMS login path when
+        // existing provider credentials are configured. Explicit force-preview override
+        // remains possible if the operator needs to disable live SMS without code changes.
+        if (getenv('ROBITRAIL_FORCE_PREVIEW') === 'true') {
+            $merged['bdapps_mode'] = 'preview';
+        } elseif (self::isConfiguredSecret($merged['bdapps_api_secret'] ?? '') &&
+                  self::isConfiguredSecret($merged['php_gateway_shared_secret'] ?? '')) {
+            $merged['bdapps_mode'] = 'production';
+        }
+        // Restore the callback URL missing from earlier live installations. Does NOT
+        // enable CaaS, subscription, or bypass provider callback authentication.
+        $callbackUrl = (string) ($merged['node_internal_callback_url'] ?? '');
+        if ($callbackUrl === '' || str_contains($callbackUrl, 'example.com')) {
+            $merged['node_internal_callback_url'] = 'https://robitrail-4.ipsc100157.workers.dev/api/internal/bdapps/callback';
+        }
+        $merged['live_charging_enabled'] = false;
+        $merged['subscription_enabled'] = false;
         $merged['_meta'] = [
             'configSource' => $configSource,
             'hasRealAppSecret' => self::isConfiguredSecret($merged['bdapps_api_secret'] ?? ''),

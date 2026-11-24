@@ -37,5 +37,6 @@ ResponseHelper::sendJson($httpStatus, [
     'blocked' => (bool) ($result['blocked'] ?? false),
     'statusCode' => (string) ($result['statusCode'] ?? 'UNKNOWN'),
     'statusDetail' => (string) ($result['statusDetail'] ?? ''),
+    'subscriptionStatus' => (string) (($result['data']['subscriptionStatus'] ?? 'UNKNOWN')),
     'maskedNumber' => ResponseHelper::maskMsisdn($msisdn),
 ]);

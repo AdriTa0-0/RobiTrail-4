@@ -10,7 +10,7 @@ $config = ConfigLoader::load();
 ResponseHelper::sendJson(200, [
     'ok' => true,
     'service' => 'robitrail-bdapps-php-gateway',
-    'appId' => (string) ($config['bdapps_app_id'] ?? 'APP_140847'),
+    'appId' => (string) ($config['bdapps_app_id'] ?? 'APP_140851'),
     'mode' => (string) ($config['bdapps_mode'] ?? 'preview'),
     'phpVersion' => PHP_VERSION,
     'curlEnabled' => function_exists('curl_init'),

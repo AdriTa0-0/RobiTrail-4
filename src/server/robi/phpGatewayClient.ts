@@ -236,6 +236,13 @@ export async function verifyOtpViaPhpGateway(
   }>("otp_verify.php", { msisdn, referenceNo, otp }, fetcher);
 }
 
+export async function queryCaasBalanceViaPhpGateway(msisdn: string, fetcher?: typeof fetch) {
+  return callPhpGateway<{
+    ok?: boolean; statusCode?: string; statusDetail?: string;
+    accountType?: string; accountStatus?: string; chargeableBalance?: string | null; currency?: string;
+  }>("caas_balance.php", { msisdn }, fetcher);
+}
+
 export async function chargeCaasViaPhpGateway(
   params: {
     msisdn: string;

@@ -1,6 +1,0 @@
-{
-  "summary":  "Architecture and integration plan for adding a standalone PHP bdapps API gateway, HMAC-SHA256 Node-to-PHP authentication, Firestore atomic wallet persistence, and strict preview/approval safety gates without altering existing RobiTrail UI or gameplay.",
-  "updatedAt":  "2026-11-22T18:21:37.707498637Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

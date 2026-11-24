@@ -64,6 +64,14 @@ export const AccountPage: React.FC = () => {
   const [flowBusy, setFlowBusy] = useState(false);
   const [flowError, setFlowError] = useState<string | null>(null);
   const [flowNotice, setFlowNotice] = useState<string | null>(null);
+  const [isPreviewMode, setIsPreviewMode] = useState(Boolean(import.meta.env.DEV));
+  useEffect(() => {
+    let active = true;
+    fetch("/api/health").then((r) => r.json()).then((data: { bdappsMode?: string }) => {
+      if (active) setIsPreviewMode(data.bdappsMode === "preview");
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   // Authenticated management state
   const [nameEditInput, setNameEditInput] = useState(accountProfile?.displayName || "");
@@ -121,10 +129,7 @@ export const AccountPage: React.FC = () => {
     setFlowNotice(null);
     setFlowBusy(true);
     try {
-      const res = await requestBdappsOtp(phoneInput, {
-        intent,
-        consentAccepted: true,
-      });
+      const res = await requestBdappsOtp(phoneInput, { intent });
       setOtpReq(res);
       setOtpCodeInput("");
       setFlowNotice(res.notice || null);
@@ -338,8 +343,8 @@ export const AccountPage: React.FC = () => {
               </div>
             </div>
 
-            {/* 1-Click Demo Registration Helper + Welcome Tokens Highlight */}
-            <div className="rounded-xl bg-[#FAF8F5] border border-amber-200 p-4 flex flex-wrap items-center justify-between gap-4">
+            {/* Preview helper must never be visible in production. */}
+            {isPreviewMode && <div className="rounded-xl bg-[#FAF8F5] border border-amber-200 p-4 flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-start gap-3 max-w-xl">
                 <TokenEmblem size="md" className="mt-0.5" />
                 <div className="space-y-0.5">
@@ -380,7 +385,7 @@ export const AccountPage: React.FC = () => {
                       : "ডেমো অ্যাকাউন্ট (+১০ টোকেন)"}
                 </span>
               </button>
-            </div>
+            </div>}
 
             {/* Step 1: Enter Mobile Number & Verify Eligibility */}
             <form

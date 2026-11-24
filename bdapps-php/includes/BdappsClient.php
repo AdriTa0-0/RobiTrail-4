@@ -74,14 +74,14 @@ final class BdappsClient
             'applicationId' => $this->config['bdapps_app_id'],
             'password' => $this->config['bdapps_api_secret'],
             'subscriberId' => ResponseHelper::toTelUri($msisdnDigits),
-            'applicationHash' => $referenceNo,
+            // applicationHash is optional in the official spec; do not confuse it with provider referenceNo.
+            // The provider returns referenceNo after requesting an OTP.
         ];
         if (!empty($meta)) {
             $payload['applicationMetaData'] = $meta;
         }
 
-        // TODO_CONFIRM_WITH_BDAPPS: Confirm whether APP_140847 uses /otp/request vs /subscription/otp/request
-        // and confirm registration OTP does NOT auto-activate a recurring subscription.
+// The documented OTP verify flow activates a subscription; free login is blocked in the gateway.
         return $this->postBdappsJson($path, $payload);
     }
 
@@ -98,11 +98,9 @@ final class BdappsClient
         }
 
         $path = (string) ($this->config['paths']['otp_verify'] ?? '/otp/verify');
-        // TODO_CONFIRM_WITH_BDAPPS: Confirm whether bdapps expects (`referenceNo`, `otp`) or (`subscriberId`, `otp`/`code`).
         $payload = [
             'applicationId' => $this->config['bdapps_app_id'],
             'password' => $this->config['bdapps_api_secret'],
-            'subscriberId' => ResponseHelper::toTelUri($msisdnDigits),
             'referenceNo' => $referenceNo,
             'otp' => $otp,
         ];
@@ -115,6 +113,23 @@ final class BdappsClient
      * NEVER credits tokens directly; returns provider status (`pending` / `confirmed` / `failed`)
      * or blocks safely when `live_charging_enabled` is false.
      */
+    /** Official TAP /caas/get/balance (read-only; does not debit a subscriber). */
+    public function queryCaasBalance(string $msisdnDigits): array
+    {
+        if (!$this->isProductionReady()) {
+            return ['ok' => false, 'blocked' => true, 'statusCode' => 'PREVIEW_MODE',
+                'statusDetail' => 'Provider balance query requires configured production access.'];
+        }
+        $path = (string) ($this->config['paths']['caas_query_balance'] ?? '/caas/get/balance');
+        return $this->postBdappsJson($path, [
+            'applicationId' => $this->config['bdapps_app_id'],
+            'password' => $this->config['bdapps_api_secret'],
+            'subscriberId' => ResponseHelper::toTelUri($msisdnDigits),
+            'paymentInstrumentName' => 'MobileAccount',
+            'currency' => 'BDT',
+        ]);
+    }
+
     public function chargeCaasDirectDebit(
         string $msisdnDigits,
         string $externalTrxId,
@@ -133,8 +148,7 @@ final class BdappsClient
         }
 
         $path = (string) ($this->config['paths']['caas_direct_debit'] ?? '/caas/direct/debit');
-        // TODO_CONFIRM_WITH_BDAPPS: Verify exact casing of `currency` vs `Currency` and
-        // `paymentInstrumentName` (`MobileAccount` vs `Mobile Account`) for APP_140847.
+// Swagger specifies lowercase currency and paymentInstrumentName=MobileAccount.
         $res = $this->postBdappsJson($path, [
             'applicationId' => $this->config['bdapps_app_id'],
             'password' => $this->config['bdapps_api_secret'],

@@ -14,6 +14,9 @@
     "BDAPPS_PHP_BASE_URL": "https://bdappsdigitalapps.com/auw26/RobiTrail",
     "FIREBASE_PROJECT_ID": "robitrail-c9e88",
     "FIRESTORE_DATABASE_ID": "(default)",
-    "BDAPPS_MODE": "preview"
+    "BDAPPS_MODE": "production",
+    "ROBITRAIL_SMS_LOGIN_ENABLED": "true",
+    "BDAPPS_LIVE_CHARGING_ENABLED": "false",
+    "BDAPPS_SUBSCRIPTION_ENABLED": "false"
   }
 }

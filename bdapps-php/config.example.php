@@ -2,28 +2,16 @@
 
 declare(strict_types=1);
 
-/**
- * RobiTrail bdapps PHP Gateway — Configuration Template
- *
- * SECURITY DEPLOYMENT INSTRUCTION:
- * 1. NEVER place your filled production config inside `public_html/` or any web-accessible directory.
- * 2. Copy this file to ONE LEVEL ABOVE `public_html` on cPanel, e.g.:
- *      /home/<CPANEL_USER>/private/robitrail_bdapps_config.php
- *    (or point ROBITRAIL_BDAPPS_CONFIG in cPanel PHP / Apache SetEnv to its path).
- * 3. Set file permissions to 0600 on the private config file.
- * 4. Keep `live_charging_enabled` => false and `subscription_enabled` => false until bdapps
- *    officially approves APP_140847 for live billing and confirms the items below.
- */
 
 return [
     // Application Identity (Robi / bdapps)
-    'bdapps_app_id' => getenv('BDAPPS_APP_ID') ?: 'APP_140847',
+    'bdapps_app_id' => getenv('BDAPPS_APP_ID') ?: 'APP_140851',
 
     // Placeholder ONLY — populate inside your private server config outside public_html
     'bdapps_api_secret' => getenv('BDAPPS_API_SECRET') ?: 'REPLACE_WITH_BDAPPS_API_SECRET',
 
     // Provider Base URL:
-    // TODO_CONFIRM_WITH_BDAPPS: Confirm exact approved REST base URL for APP_140847
+    // TODO_CONFIRM_WITH_BDAPPS: Confirm exact approved REST base URL for APP_140851
     // (commonly https://developer.bdapps.com or https://api.applink.com.bd).
     'bdapps_base_url' => getenv('BDAPPS_BASE_URL') ?: 'https://developer.bdapps.com',
     'bdapps_shortcode' => getenv('BDAPPS_SHORTCODE') ?: '21213',
@@ -49,7 +37,7 @@ return [
 
     // TODO_CONFIRM_WITH_BDAPPS:
     // Confirm whether `/otp/request` + `/otp/verify` vs `/subscription/otp/request` + `/subscription/otp/verify`
-    // triggers automatic recurring subscription activation on APP_140847.
+    // triggers automatic recurring subscription activation on APP_140851.
     // Set to true ONLY after bdapps confirms standalone registration OTP does NOT auto-subscribe.
     'otp_auto_subscribe_verified_safe' => false,
 
@@ -61,7 +49,7 @@ return [
     'hmac_max_skew_seconds' => 300,
 
     // Internal Node.js callback URL where PHP forwards verified bdapps notifications
-    'node_internal_callback_url' => getenv('NODE_INTERNAL_CALLBACK_URL') ?: 'https://your-nodejs-backend.example.com/api/internal/bdapps/callback',
+    'node_internal_callback_url' => getenv('NODE_INTERNAL_CALLBACK_URL') ?: 'https://robitrail-4.ipsc100157.workers.dev/api/internal/bdapps/callback',
     'node_callback_shared_secret' => getenv('NODE_CALLBACK_SHARED_SECRET') ?: 'REPLACE_WITH_PHP_TO_NODE_CALLBACK_SECRET',
 
     // Provider Callback Verification (bdapps -> PHP notification endpoints)
@@ -76,12 +64,13 @@ return [
     'allow_unverified_notifications_in_preview' => false,
 
     // bdapps API endpoint paths relative to `bdapps_base_url`
-    // TODO_CONFIRM_WITH_BDAPPS: Verify exact path variants approved for APP_140847.
+    // TODO_CONFIRM_WITH_BDAPPS: Verify exact path variants approved for APP_140851.
     'paths' => [
         'sms_send' => '/sms/send',
         'otp_request' => '/otp/request',
         'otp_verify' => '/otp/verify',
         'caas_direct_debit' => '/caas/direct/debit',
+        'caas_query_balance' => '/caas/get/balance',
         'subscription_status' => '/subscription/getStatus',
         'subscription_send' => '/subscription/send',
     ],

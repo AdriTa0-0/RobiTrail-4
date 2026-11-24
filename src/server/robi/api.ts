@@ -1,9 +1,7 @@
 import crypto from "node:crypto";
 import {
-  getCertificate,
   sanitizePublicAccount,
   sanitizeTrailIds,
-  saveCertificate,
   type CertificateRecord,
   type SubscriptionRecord,
 } from "./dbStore";
@@ -16,11 +14,11 @@ import {
 } from "./bdappsIntegration";
 import {
   getSubscriptionStatusViaPhpGateway,
-  requestOtpViaPhpGateway,
+  queryCaasBalanceViaPhpGateway,
   subscribeViaPhpGateway,
   unsubscribeViaPhpGateway,
-  verifyOtpViaPhpGateway,
   verifyPhpCallbackSignature,
+  sendSmsViaPhpGateway,
 } from "./phpGatewayClient";
 import {
   createLivePendingPurchase,
@@ -29,6 +27,8 @@ import {
   getPersistenceBackend,
   grantWelcomeTokensIdempotent,
   loadAccount,
+  loadCertificate,
+  persistCertificate,
   loadOrInitWallet,
   loadSubscription,
   persistSubscription,
@@ -38,6 +38,7 @@ import {
   settleLivePurchase,
   unlockTrailWithTokensIdempotent,
 } from "./walletPersistence";
+import { fsCreateLoginOtp, fsMarkLoginOtpSent, fsConsumeLoginOtp, isFirestorePersistenceConfigured } from "./firestoreWalletStore";
 import { createMiniApp, type Request, type Response, type NextFunction } from "./miniApp";
 
 const app = createMiniApp();
@@ -46,11 +47,21 @@ const app = createMiniApp();
 let cachedKey: string | null = null;
 function getSigningKey(): string {
   if (!cachedKey) {
-    cachedKey =
-      (process.env as Record<string, string | undefined>).SESSION_SIGNING_KEY ||
-      crypto.randomBytes(32).toString("hex");
+    const env = process.env as Record<string, string | undefined>;
+    if (env.BDAPPS_MODE === "production" && !env.SESSION_SIGNING_KEY) {
+      throw new Error("SESSION_SIGNING_KEY must be configured for production sessions.");
+    }
+    cachedKey = env.SESSION_SIGNING_KEY || crypto.randomBytes(32).toString("hex");
   }
   return cachedKey;
+}
+
+/** Separate domain for login OTPs; reuses the already-configured production session secret. */
+function getOtpHmacKey(): Buffer | null {
+  const env = process.env as Record<string, string | undefined>;
+  const input = env.OTP_HASH_SECRET?.trim() || env.SESSION_SIGNING_KEY?.trim() || "";
+  if (input.length < 32 || input.startsWith("REPLACE_WITH_")) return null;
+  return crypto.createHmac("sha256", input).update("RobiTrail/SMS-OTP/v1").digest();
 }
 
 function getRuntimeSettings() {
@@ -76,7 +87,7 @@ function buildSubscriptionDisclosure(mode: "preview" | "production", shortCode: 
     billingFrequency: "No recurring billing active",
     renewalTerms:
       "Token Center purchases are one-time only and never activate a recurring subscription.",
-    cancellationMethod: `Send STOP ROBITRAIL to ${shortCode} if a carrier subscription is ever enabled.`,
+    cancellationMethod: "Use the in-app unsubscribe control when an approved subscription is offered.",
     shortCode,
   };
 }
@@ -161,6 +172,10 @@ function requireSubscriberAuth(req: AuthedRequest, res: Response, next: NextFunc
     });
     return;
   }
+  if (decoded.mode !== getRuntimeSettings().mode || !normalizeMsisdn(decoded.msisdn)) {
+    res.status(401).json({ error: "Session is not valid for this deployment mode." });
+    return;
+  }
   req.subscriberSession = decoded;
   next();
 }
@@ -212,8 +227,17 @@ app.get("/api/health", (_req, res) => {
     liveChargingBlockedReason: cfg.liveChargingBlockedReason,
     subscriptionEnabled: cfg.subscriptionEnabled,
     persistenceBackend: getPersistenceBackend(),
+    smsLoginConfigured: cfg.mode === "production" && process.env.ROBITRAIL_SMS_LOGIN_ENABLED === "true" && Boolean(getOtpHmacKey()) && isFirestorePersistenceConfigured(),
   });
 });
+
+/** Enrich saved certificates from Firestore before sending profiles to clients. */
+async function toPublicAccount(account: Parameters<typeof sanitizePublicAccount>[0]) {
+  const publicAccount = sanitizePublicAccount(account);
+  if (getRuntimeSettings().mode !== "production") return publicAccount;
+  const records = await Promise.all(account.certificateIds.slice(0, 100).map((id) => loadCertificate(id)));
+  return { ...publicAccount, certificates: records.filter((c): c is CertificateRecord => c !== null && c.ownerAccountId === account.accountId) };
+}
 
 // 1. Robi Operator Eligibility Check (routed through PHP gateway in production)
 app.post("/api/bdapps/eligibility", async (req, res) => {
@@ -230,23 +254,14 @@ app.post("/api/bdapps/eligibility", async (req, res) => {
   const existingAccount = await loadAccount(msisdn).catch(() => null);
 
   if (runtime.mode === "production") {
-    const gatewayRes = await getSubscriptionStatusViaPhpGateway(msisdn);
-    if (!gatewayRes.ok && gatewayRes.httpStatus >= 500) {
-      res.status(502).json({
-        error:
-          gatewayRes.error ||
-          "Unable to reach PHP bdapps eligibility gateway. Please try again later.",
-      });
-      return;
-    }
     res.json({
       mode: "production",
       maskedNumber: maskMsisdn(msisdn),
       accountExists: Boolean(existingAccount),
-      providerChecked: gatewayRes.ok,
-      operatorVerified: Boolean(gatewayRes.data?.statusCode === "S1000"),
+      providerChecked: false,
+      operatorVerified: false,
       terms,
-      limitationNote: null,
+      limitationNote: "The number format is valid. Actual operator and SMS eligibility are confirmed by the provider when sending your code; MNP means prefixes cannot prove carrier ownership.",
     });
     return;
   }
@@ -285,28 +300,31 @@ app.post("/api/bdapps/otp/request", async (req, res) => {
   const referenceNo = `RT-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
 
   if (runtime.mode === "production") {
-    const gwRes = await requestOtpViaPhpGateway(msisdn, referenceNo, intent);
-    if (!gwRes.ok) {
-      res.status(gwRes.httpStatus === 503 ? 503 : gwRes.httpStatus >= 500 ? 502 : 400).json({
-        error: gwRes.error || gwRes.data?.statusDetail || "PHP bdapps OTP request declined.",
-        statusCode: gwRes.data?.statusCode,
-      });
+    const env = process.env as Record<string, string | undefined>;
+    if (env.ROBITRAIL_SMS_LOGIN_ENABLED !== "true" || !isFirestorePersistenceConfigured() || !getOtpHmacKey()) {
+      res.status(503).json({ error: "SMS login is not configured. No subscription or charge was initiated." });
       return;
     }
-    const ref = typeof gwRes.data?.referenceNo === "string" ? gwRes.data.referenceNo : referenceNo;
-    otpChallenges.set(ref, {
-      referenceNo: ref,
-      msisdn,
-      previewCode: "",
-      expiresAt: Date.now() + 5 * 60 * 1000,
-      attempts: 0,
-    });
-    res.json({
-      mode: "production",
-      referenceNo: ref,
-      maskedNumber: maskMsisdn(msisdn),
-      expiresInSeconds: 300,
-    });
+    const code = String(crypto.randomInt(100000, 1000000));
+    const codeHash = crypto.createHmac("sha256", getOtpHmacKey()!).update(`${referenceNo}:${code}`).digest("hex");
+    try {
+      const created = await fsCreateLoginOtp(referenceNo, msisdn, codeHash);
+      if (!created.allowed) {
+        res.status(429).json({ error: "Please wait before requesting another OTP.", retryAfterSeconds: created.retryAfterSeconds });
+        return;
+      }
+      // This invokes ONLY /sms/send, never bdapps /otp/request or /otp/verify.
+      const sent = await sendSmsViaPhpGateway(msisdn, `RobiTrail login code: ${code}. Valid for 5 minutes. Do not share this code.`);
+      const accepted = sent.ok && sent.data?.statusCode === "S1000";
+      await fsMarkLoginOtpSent(referenceNo, accepted);
+      if (!accepted) {
+        res.status(503).json({ error: "SMS could not be accepted by the provider. Please try again later.", statusCode: sent.data?.statusCode || "SMS_UNAVAILABLE" });
+        return;
+      }
+      res.json({ mode: "production", referenceNo, maskedNumber: maskMsisdn(msisdn), expiresInSeconds: 300, notice: "SMS request accepted by provider. Delivery is not yet confirmed." });
+    } catch {
+      res.status(503).json({ error: "SMS login is temporarily unavailable." });
+    }
     return;
   }
 
@@ -334,21 +352,49 @@ app.post("/api/bdapps/otp/request", async (req, res) => {
 app.post("/api/bdapps/otp/verify", async (req, res) => {
   const referenceNo = typeof req.body?.referenceNo === "string" ? req.body.referenceNo.trim() : "";
   const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
+  if (!/^RT-[A-F0-9]{12}$/.test(referenceNo)) {
+    res.status(400).json({ error: "Invalid OTP reference." });
+    return;
+  }
   const displayName =
     typeof req.body?.displayName === "string"
       ? req.body.displayName.trim().slice(0, 60)
       : undefined;
   const localTrailIds = sanitizeTrailIds(req.body?.localCompletedTrailIds);
-  const localCertificateIds = Array.isArray(req.body?.localCertificateIds)
-    ? req.body.localCertificateIds.filter((id: unknown): id is string => typeof id === "string")
-    : [];
+  const localCertificateIds = getRuntimeSettings().mode === "production" ? [] :
+    Array.isArray(req.body?.localCertificateIds)
+      ? req.body.localCertificateIds.filter((id: unknown): id is string => typeof id === "string")
+      : [];
   const preferredLang = req.body?.preferredLang === "bn" ? "bn" : "en";
   const preferredCityId =
     req.body?.preferredCityId === "dhaka" || req.body?.preferredCityId === "sylhet"
       ? req.body.preferredCityId
       : "chattogram";
 
-  const challenge = otpChallenges.get(referenceNo);
+  const runtime = getRuntimeSettings();
+  let productionMsisdn: string | undefined;
+  if (runtime.mode === "production") {
+    const env = process.env as Record<string, string | undefined>;
+    if (env.ROBITRAIL_SMS_LOGIN_ENABLED !== "true" || !getOtpHmacKey() || !/^\d{6}$/.test(otp)) {
+      res.status(400).json({ error: "Invalid OTP or SMS login is not configured." });
+      return;
+    }
+    try {
+      const hash = crypto.createHmac("sha256", getOtpHmacKey()!).update(`${referenceNo}:${otp}`).digest("hex");
+      const verified = await fsConsumeLoginOtp(referenceNo, hash);
+      if (!verified.ok || !verified.msisdn) {
+        res.status(400).json({ error: "OTP invalid, expired, or already used. Please request a new code." });
+        return;
+      }
+      productionMsisdn = verified.msisdn;
+    } catch {
+      res.status(503).json({ error: "OTP verification service unavailable." });
+      return;
+    }
+  }
+  const challenge = runtime.mode === "production" && productionMsisdn
+    ? { referenceNo, msisdn: productionMsisdn, previewCode: "", expiresAt: Date.now() + 300_000, attempts: 0 }
+    : otpChallenges.get(referenceNo);
   if (!challenge) {
     res.status(400).json({ error: "OTP session not found or expired. Please request a new OTP." });
     return;
@@ -367,18 +413,8 @@ app.post("/api/bdapps/otp/verify", async (req, res) => {
   }
   challenge.attempts += 1;
 
-  const runtime = getRuntimeSettings();
   if (runtime.mode === "production") {
-    const gwRes = await verifyOtpViaPhpGateway(challenge.msisdn, referenceNo, otp);
-    if (!gwRes.ok || !gwRes.data?.verified) {
-      res.status(gwRes.httpStatus === 503 ? 503 : gwRes.httpStatus >= 500 ? 502 : 400).json({
-        error:
-          gwRes.error ||
-          gwRes.data?.statusDetail ||
-          `OTP verification failed (${5 - challenge.attempts} attempts left).`,
-      });
-      return;
-    }
+    // Already atomically verified and consumed in Firestore above.
   } else {
     if (!/^\d{6}$/.test(otp) || otp !== challenge.previewCode) {
       const remaining = Math.max(0, 5 - challenge.attempts);
@@ -428,7 +464,7 @@ app.post("/api/bdapps/otp/verify", async (req, res) => {
       token,
       maskedNumber: masked,
       accountActivated: true,
-      account: sanitizePublicAccount(accountRecord),
+      account: await toPublicAccount(accountRecord),
       subscription: formatPublicSubscription(
         challenge.msisdn,
         sub,
@@ -471,6 +507,7 @@ app.post("/api/bdapps/subscribe", requireSubscriberAuth, async (req: AuthedReque
   const now = nowDate.toISOString();
   const disclosure = buildSubscriptionDisclosure(runtime.mode, runtime.shortCode);
 
+  let carrierSubscriptionConfirmed = runtime.mode !== "production";
   if (runtime.mode === "production") {
     const gwRes = await subscribeViaPhpGateway(session.msisdn, true);
     if (!gwRes.ok) {
@@ -479,11 +516,13 @@ app.post("/api/bdapps/subscribe", requireSubscriberAuth, async (req: AuthedReque
       });
       return;
     }
+    const status = await getSubscriptionStatusViaPhpGateway(session.msisdn);
+    carrierSubscriptionConfirmed = status.ok && String(status.data?.subscriptionStatus || "").replace(/[. ]+$/g, "").toUpperCase() === "REGISTERED";
   }
 
   const subRecord = await persistSubscription({
     msisdn: session.msisdn,
-    status: runtime.mode === "production" ? "active_production" : "active_preview",
+    status: runtime.mode === "production" ? (carrierSubscriptionConfirmed ? "active_production" : "inactive") : "active_preview",
     mode: runtime.mode,
     planName: disclosure.planName,
     priceLabel: disclosure.priceLabel,
@@ -492,14 +531,15 @@ app.post("/api/bdapps/subscribe", requireSubscriberAuth, async (req: AuthedReque
     cancellationMethod: disclosure.cancellationMethod,
     consentTimestamp: now,
     nextRenewalAt: null,
-    entitlementActive: true,
+    entitlementActive: carrierSubscriptionConfirmed,
     subscriberId: masked,
     updatedAt: now,
   });
 
-  res.json({
+  res.status(carrierSubscriptionConfirmed ? 200 : 202).json({
     mode: runtime.mode,
-    entitlementActive: true,
+    entitlementActive: carrierSubscriptionConfirmed,
+    pendingCarrierConfirmation: !carrierSubscriptionConfirmed,
     subscription: formatPublicSubscription(
       session.msisdn,
       subRecord,
@@ -513,7 +553,16 @@ app.post("/api/bdapps/subscribe", requireSubscriberAuth, async (req: AuthedReque
 app.get("/api/bdapps/status", requireSubscriberAuth, async (req: AuthedRequest, res) => {
   const session = req.subscriberSession!;
   const runtime = getRuntimeSettings();
-  const record = await loadSubscription(session.msisdn).catch(() => null);
+  let record = await loadSubscription(session.msisdn).catch(() => null);
+  if (runtime.mode === "production" && runtime.subscriptionEnabled && record?.consentTimestamp) {
+    const status = await getSubscriptionStatusViaPhpGateway(session.msisdn);
+    const registered = status.ok && String(status.data?.subscriptionStatus || "").replace(/[. ]+$/g, "").toUpperCase() === "REGISTERED";
+    if (status.ok && registered && !record.entitlementActive) {
+      record = await persistSubscription({ ...record, status: "active_production", entitlementActive: true, updatedAt: new Date().toISOString() });
+    } else if (status.ok && !registered && record.entitlementActive) {
+      record = await persistSubscription({ ...record, status: "unsubscribed", entitlementActive: false, updatedAt: new Date().toISOString() });
+    }
+  }
   res.json({
     mode: runtime.mode,
     subscription: formatPublicSubscription(session.msisdn, record, runtime.mode, runtime.shortCode),
@@ -583,7 +632,7 @@ app.get("/api/account/me", requireSubscriberAuth, async (req: AuthedRequest, res
     const wallet = await loadOrInitWallet(session.msisdn, account.accountId);
     res.json({
       mode: runtime.mode,
-      account: sanitizePublicAccount(account),
+      account: await toPublicAccount(account),
       subscription: formatPublicSubscription(session.msisdn, sub, runtime.mode, runtime.shortCode),
       wallet,
     });
@@ -655,7 +704,7 @@ app.post("/api/account/demo-register", async (req, res) => {
     token,
     maskedNumber: masked,
     accountActivated: true,
-    account: sanitizePublicAccount(account),
+    account: await toPublicAccount(account),
     subscription: formatPublicSubscription(msisdn, sub, "preview", runtime.shortCode),
     wallet: rewardResult.wallet,
     welcomeGrantedNow: rewardResult.grantedNow,
@@ -875,10 +924,13 @@ app.post("/api/tokens/shop/purchase", requireSubscriberAuth, async (req: AuthedR
     return;
   }
 
-  const idempotencyKey =
-    typeof req.body?.idempotencyKey === "string" && req.body.idempotencyKey.trim()
-      ? req.body.idempotencyKey.trim().slice(0, 100)
-      : `shop:${account.accountId}:${pkg.packageId}:${Date.now()}`;
+  const clientIdempotencyKey =
+    typeof req.body?.idempotencyKey === "string" && /^[A-Za-z0-9:_-]{8,100}$/.test(req.body.idempotencyKey)
+      ? req.body.idempotencyKey
+      : crypto.randomBytes(16).toString("hex");
+  // The phone/account is part of the HMAC to prevent cross-account transaction ID reuse.
+  // Stable for retries with the same client key but not controllable by another subscriber.
+  const idempotencyKey = `RT-${crypto.createHmac("sha256", getSigningKey()).update(`${session.msisdn}:${pkg.packageId}:${clientIdempotencyKey}`).digest("hex").slice(0, 40)}`;
 
   // Preview Mode simulation flow (zero real balance charged)
   if (runtime.mode !== "production") {
@@ -1061,6 +1113,22 @@ app.post("/api/tokens/shop/purchase", requireSubscriberAuth, async (req: AuthedR
   }
 });
 
+// Read-only balance query using the official bdapps CaaS endpoint.
+// Requires an authenticated player, but never initiates a direct debit.
+app.post("/api/bdapps/balance", requireSubscriberAuth, async (req: AuthedRequest, res) => {
+  if (getRuntimeSettings().mode !== "production") {
+    res.status(503).json({ error: "Balance query requires real provider access." });
+    return;
+  }
+  const result = await queryCaasBalanceViaPhpGateway(req.subscriberSession!.msisdn);
+  if (!result.ok || result.data?.statusCode !== "S1000") {
+    res.status(502).json({ error: "Provider balance query unavailable.", statusCode: result.data?.statusCode || "PROVIDER_UNAVAILABLE" });
+    return;
+  }
+  res.json({ ok: true, currency: "BDT", accountType: result.data.accountType,
+    accountStatus: result.data.accountStatus, chargeableBalance: result.data.chargeableBalance ?? null });
+});
+
 // 7C. Internal Signed Webhook Callback from PHP Gateway (charging / subscription / consent)
 app.post("/api/internal/bdapps/callback", async (req, res) => {
   const rawBody =
@@ -1085,9 +1153,17 @@ app.post("/api/internal/bdapps/callback", async (req, res) => {
       : {};
 
   if (event === "charging_notification") {
+    if (!getLiveChargingGateStatus().allowed) {
+      res.status(503).json({ ok: false, error: "Carrier billing settlement disabled." });
+      return;
+    }
     const externalTrxId =
       typeof payload.externalTrxId === "string" ? payload.externalTrxId.trim() : "";
-    const outcome = payload.outcome === "confirmed" ? "confirmed" : "failed";
+    if (payload.outcome !== "confirmed" && payload.outcome !== "failed") {
+      res.status(400).json({ ok: false, error: "Unrecognized charging outcome." });
+      return;
+    }
+    const outcome = payload.outcome;
     if (!externalTrxId) {
       res.status(400).json({ ok: false, error: "Missing externalTrxId in charging_notification." });
       return;
@@ -1101,6 +1177,9 @@ app.post("/api/internal/bdapps/callback", async (req, res) => {
           typeof payload.providerStatusDetail === "string"
             ? payload.providerStatusDetail
             : undefined,
+        callbackMsisdn: normalizeMsisdn(payload.msisdn) || undefined,
+        callbackAmountBdt: typeof payload.amount === "string" ? payload.amount : undefined,
+        callbackCurrency: typeof payload.currency === "string" ? payload.currency : undefined,
       });
 
       if (!settled.found) {
@@ -1207,7 +1286,7 @@ app.patch("/api/account/profile", requireSubscriberAuth, async (req: AuthedReque
       preferredLang,
       preferredCityId,
     });
-    res.json({ account: sanitizePublicAccount(updated) });
+    res.json({ account: await toPublicAccount(updated) });
   } catch (err) {
     res.status(503).json({ error: err instanceof Error ? err.message : "Profile update failed." });
   }
@@ -1224,15 +1303,16 @@ app.post("/api/account/progress", requireSubscriberAuth, async (req: AuthedReque
     }
 
     const incomingTrails = sanitizeTrailIds(req.body?.completedTrailIds);
-    const incomingCertIds = Array.isArray(req.body?.certificateIds)
-      ? req.body.certificateIds.filter((id: unknown): id is string => typeof id === "string")
-      : [];
+    const incomingCertIds = getRuntimeSettings().mode === "production" ? [] :
+      Array.isArray(req.body?.certificateIds)
+        ? req.body.certificateIds.filter((id: unknown): id is string => typeof id === "string")
+        : [];
 
     const updated = await saveOrUpdateAccount(session.msisdn, masked, {
       completedTrailIds: incomingTrails,
       certificateIds: incomingCertIds,
     });
-    res.json({ account: sanitizePublicAccount(updated) });
+    res.json({ account: await toPublicAccount(updated) });
   } catch (err) {
     res.status(503).json({ error: err instanceof Error ? err.message : "Progress sync failed." });
   }
@@ -1267,7 +1347,20 @@ const ASSESSMENT_ANSWER_KEY: Record<string, string> = {
 app.post("/api/certification/assess", async (req, res) => {
   const learnerName =
     typeof req.body?.learnerName === "string" ? req.body.learnerName.trim().slice(0, 80) : "";
-  const completedTrailIds = sanitizeTrailIds(req.body?.completedTrailIds);
+  const session = extractOptionalSession(req);
+  const productionCert = getRuntimeSettings().mode === "production";
+  if (productionCert && (!session || session.mode !== "production")) {
+    res.status(401).json({ error: "Mobile OTP login is required to issue a saved certificate." });
+    return;
+  }
+  const existingAccount = session ? await loadAccount(session.msisdn).catch(() => null) : null;
+  if (productionCert && !existingAccount) {
+    res.status(404).json({ error: "No verified account found." });
+    return;
+  }
+  const completedTrailIds = productionCert
+    ? sanitizeTrailIds(existingAccount?.completedTrailIds || [])
+    : sanitizeTrailIds(req.body?.completedTrailIds);
   const answers =
     req.body?.answers && typeof req.body.answers === "object"
       ? (req.body.answers as Record<string, unknown>)
@@ -1307,11 +1400,8 @@ app.post("/api/certification/assess", async (req, res) => {
     return;
   }
 
-  const session = extractOptionalSession(req);
-  const existingAccount = session ? await loadAccount(session.msisdn).catch(() => null) : null;
-
   const certificateId = `RT-PROTO-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
-  const record: CertificateRecord = saveCertificate({
+  const record: CertificateRecord = await persistCertificate({
     certificateId,
     learnerName,
     completedTrailIds,
@@ -1327,7 +1417,7 @@ app.post("/api/certification/assess", async (req, res) => {
     await saveOrUpdateAccount(session.msisdn, maskMsisdn(session.msisdn), {
       completedTrailIds,
       certificateIds: [certificateId],
-    }).catch(() => undefined);
+    });
   }
 
   res.json({
@@ -1339,13 +1429,17 @@ app.post("/api/certification/assess", async (req, res) => {
   });
 });
 
-app.get("/api/certification/verify/:id", (req, res) => {
-  const cert = getCertificate(req.params.id);
-  if (!cert) {
-    res.status(404).json({ error: "Certificate record not found." });
-    return;
+app.get("/api/certification/verify/:id", async (req, res) => {
+  try {
+    const cert = await loadCertificate(req.params.id);
+    if (!cert) {
+      res.status(404).json({ error: "Certificate record not found." });
+      return;
+    }
+    res.json({ certificate: cert });
+  } catch {
+    res.status(503).json({ error: "Certificate verification is unavailable." });
   }
-  res.json({ certificate: cert });
 });
 
 export const robiApi = app;

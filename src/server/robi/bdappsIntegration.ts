@@ -1,4 +1,4 @@
-// Server-only bdapps integration boundary for APP_140847.
+// Server-only bdapps integration boundary for APP_140851.
 // Routes all carrier SMS and CaaS calls through the signed PHP gateway (`bdapps-php/`).
 // Never import credentials or dispatch secrets into browser code.
 
@@ -46,7 +46,7 @@ export interface BdappsRuntimeConfig {
 export function getBdappsRuntimeConfig(): BdappsRuntimeConfig {
   const env = process.env as Record<string, string | undefined>;
   const phpCfg = getPhpGatewayConfig();
-  const appId = env.BDAPPS_APP_ID || "APP_140847";
+  const appId = env.BDAPPS_APP_ID || "APP_140851";
   const apiSecret = env.BDAPPS_API_SECRET || "";
   const baseUrl = env.BDAPPS_BASE_URL || "https://developer.bdapps.com";
   const shortCode = env.BDAPPS_SHORTCODE || "21213";
@@ -137,14 +137,14 @@ export async function dispatchBdappsSmsNotification(
   }
 
   const res = await sendSmsViaPhpGateway(msisdn, preview.messageEn, fetcher);
-  const delivered = Boolean(res.ok && res.data?.deliveredLive);
+  const delivered = false; // Provider S1000 is accepted for delivery, not handset confirmation.
 
   return {
     ...preview,
     deliveredLive: delivered,
-    notice: delivered
-      ? `Dispatched via PHP bdapps gateway (${cfg.appId}).`
-      : res.error || "PHP bdapps SMS gateway did not confirm live delivery.",
+    notice: res.ok && res.data?.statusCode === "S1000"
+      ? `SMS accepted by bdapps (${cfg.appId}); handset delivery is not confirmed.`
+      : res.error || "PHP bdapps SMS gateway did not accept the message.",
   };
 }
 

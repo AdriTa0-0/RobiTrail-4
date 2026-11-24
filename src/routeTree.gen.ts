@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
+import { Route as ApiFirestoreTestRouteImport } from './routes/api/firestore-test'
+import { Route as ApiGatewayTestRouteImport } from './routes/api/gateway-test'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -23,6 +25,12 @@ const SplatRoute = SplatRouteImport.update({
   path: '/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiFirestoreTestRoute = ApiFirestoreTestRouteImport.update({
+  id: '/api/firestore-test', path: '/api/firestore-test', getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGatewayTestRoute = ApiGatewayTestRouteImport.update({
+  id: '/api/gateway-test', path: '/api/gateway-test', getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
@@ -33,30 +41,38 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/api/$': typeof ApiSplatRoute
+  '/api/firestore-test': typeof ApiFirestoreTestRoute
+  '/api/gateway-test': typeof ApiGatewayTestRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/api/$': typeof ApiSplatRoute
+  '/api/firestore-test': typeof ApiFirestoreTestRoute
+  '/api/gateway-test': typeof ApiGatewayTestRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/api/$': typeof ApiSplatRoute
+  '/api/firestore-test': typeof ApiFirestoreTestRoute
+  '/api/gateway-test': typeof ApiGatewayTestRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$' | '/api/$'
+  fullPaths: '/' | '/$' | '/api/$' | '/api/firestore-test' | '/api/gateway-test'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$' | '/api/$'
-  id: '__root__' | '/' | '/$' | '/api/$'
+  to: '/' | '/$' | '/api/$' | '/api/firestore-test' | '/api/gateway-test'
+  id: '__root__' | '/' | '/$' | '/api/$' | '/api/firestore-test' | '/api/gateway-test'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
   ApiSplatRoute: typeof ApiSplatRoute
+  ApiFirestoreTestRoute: typeof ApiFirestoreTestRoute
+  ApiGatewayTestRoute: typeof ApiGatewayTestRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +98,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/firestore-test': {
+      id: '/api/firestore-test'
+      path: '/api/firestore-test'
+      fullPath: '/api/firestore-test'
+      preLoaderRoute: typeof ApiFirestoreTestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/gateway-test': {
+      id: '/api/gateway-test'
+      path: '/api/gateway-test'
+      fullPath: '/api/gateway-test'
+      preLoaderRoute: typeof ApiGatewayTestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +119,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   ApiSplatRoute: ApiSplatRoute,
+  ApiFirestoreTestRoute: ApiFirestoreTestRoute,
+  ApiGatewayTestRoute: ApiGatewayTestRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
