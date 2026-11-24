@@ -5,11 +5,11 @@ import { useAppRouter } from "../../router/RouterContext";
 import { BangladeshMapBackdrop } from "../common/BangladeshMapBackdrop";
 import { useRobiTrail } from "../../context/RobiTrailContext";
 
-const DESKTOP_SCREENSHOT_SRC = "/assets/aistudio/Screenshot_2026-11-22_114016_3e1a9428.png";
-const MOBILE_TABLET_SCREENSHOT_SRC = "/assets/aistudio/Screenshot_2026-11-22_114043_8c76968b.png";
+const DESKTOP_SCREENSHOT_SRC = "/assets/Screenshot_2026-11-22_114016_3e1a9428.png";
+const MOBILE_TABLET_SCREENSHOT_SRC = "/assets/Screenshot_2026-11-22_114043_8c76968b.png";
 const VISION_ILLUSTRATION_SRC =
-  "/assets/aistudio/ChatGPT_Image_Nov_22__2026__01_03_46_AM_bfccf95d.png";
-const TEAM_TORONGO_PHOTO_SRC = "/assets/aistudio/Team_Torongo_bc1561c9.jpg";
+  "/assets/ChatGPT_Image_Nov_22__2026__01_03_46_AM_bfccf95d.png";
+const TEAM_TORONGO_PHOTO_SRC = "/assets/Team_Torongo_bc1561c9.jpg";
 
 const ease = [0.22, 1, 0.36, 1] as const;
 
