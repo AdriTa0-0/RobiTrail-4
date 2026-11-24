@@ -136,12 +136,13 @@ const TOOL_GROUPS: {
   },
   {
     title: "Platform & Services",
-    note: "Telecom subscription platform and backend support.",
+    note: "Telecom subscription platform, cloud hosting, and backend support.",
     titleBn: "প্ল্যাটফর্ম ও সার্ভিস",
-    noteBn: "টেলিকম সাবস্ক্রিপশন প্ল্যাটফর্ম ও ব্যাকএন্ড সাপোর্ট।",
+    noteBn: "টেলিকম সাবস্ক্রিপশন প্ল্যাটফর্ম, ক্লাউড হোস্টিং ও ব্যাকএন্ড সাপোর্ট।",
     tools: [
       { name: "bdapps", color: "#E11D48" },
       { name: "Firebase", slug: "firebase", color: "#FFCA28" },
+      { name: "Cloudflare", slug: "cloudflare", color: "#F38020" },
     ],
   },
 ];
