@@ -35,11 +35,14 @@ export interface PlayerAchievement {
   unlockedAt: string;
 }
 
+export type PlayerAuthMethod = "robi_direct" | "otp" | "demo";
+
 export interface PlayerAccountRecord {
   accountId: string;
   msisdn: string;
   maskedPhone: string;
   displayName: string;
+  authMethod?: PlayerAuthMethod;
   completedTrailIds: string[];
   achievements: PlayerAchievement[];
   certificateIds: string[];
@@ -47,6 +50,7 @@ export interface PlayerAccountRecord {
   preferredCityId: "chattogram" | "dhaka" | "sylhet";
   createdAt: string;
   updatedAt: string;
+  lastLoginAt?: string;
 }
 
 export interface SubscriptionRecord {
@@ -105,6 +109,7 @@ export interface TokenWalletRecord {
   unlockedTrailIds: string[];
   transactions: TokenTransactionRecord[];
   processedKeys: string[];
+  pendingSubscriptionTrxId?: string | null;
   updatedAt: string;
 }
 
@@ -242,6 +247,8 @@ export function upsertAccount(
     certificateIds?: string[];
     preferredLang?: "en" | "bn";
     preferredCityId?: "chattogram" | "dhaka" | "sylhet";
+    authMethod?: PlayerAuthMethod;
+    recordLogin?: boolean;
   } = {},
 ): PlayerAccountRecord {
   const db = getDb();
@@ -284,6 +291,7 @@ export function upsertAccount(
     msisdn,
     maskedPhone,
     displayName: cleanName,
+    authMethod: opts.authMethod || existing?.authMethod,
     completedTrailIds: mergedTrails,
     achievements: computeAchievements(mergedTrails, existing?.achievements || []),
     certificateIds: validCertIds,
@@ -291,6 +299,8 @@ export function upsertAccount(
     preferredCityId,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
+    lastLoginAt:
+      opts.recordLogin || !existing ? now : existing.lastLoginAt || existing.createdAt || now,
   };
 
   db.accounts[msisdn] = next;
@@ -308,6 +318,7 @@ export function sanitizePublicAccount(acc: PlayerAccountRecord) {
     accountId: acc.accountId,
     maskedPhone: acc.maskedPhone,
     displayName: acc.displayName,
+    authMethod: acc.authMethod,
     completedTrailIds: acc.completedTrailIds,
     achievements: acc.achievements,
     certificateIds: acc.certificateIds,
@@ -316,6 +327,7 @@ export function sanitizePublicAccount(acc: PlayerAccountRecord) {
     preferredCityId: acc.preferredCityId,
     createdAt: acc.createdAt,
     updatedAt: acc.updatedAt,
+    lastLoginAt: acc.lastLoginAt || acc.updatedAt,
   };
 }
 

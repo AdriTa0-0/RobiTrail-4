@@ -65,10 +65,13 @@ export interface SavedCertificateSummary {
   prototypeLabel: string;
 }
 
+export type PersistenceBackend = "memory_preview" | "firestore" | "firestore_unconfigured";
+
 export interface ServerAccountProfile {
   accountId: string;
   maskedPhone: string;
   displayName: string;
+  authMethod?: "robi_direct" | "otp" | "demo";
   completedTrailIds: string[];
   achievements: PlayerAchievementRecord[];
   certificateIds: string[];
@@ -77,11 +80,15 @@ export interface ServerAccountProfile {
   preferredCityId: CityId;
   createdAt: string;
   updatedAt: string;
+  lastLoginAt?: string;
 }
 
 export interface OtpVerifyResponse {
   verified: boolean;
+  authMethod?: "robi_direct" | "otp" | "demo";
   mode: "preview" | "production";
+  persistenceBackend?: PersistenceBackend;
+  persistedToFirestore?: boolean;
   token: string;
   maskedNumber: string;
   accountActivated: boolean;
@@ -151,6 +158,53 @@ export async function verifyBdappsOtp(
     preferredLang: opts.preferredLang || "en",
     preferredCityId: opts.preferredCityId || "chattogram",
   });
+  setSubscriberToken(result.token);
+  return result;
+}
+
+export function inspectRobiPhoneNumber(raw: string): {
+  cleaned: string;
+  validBdFormat: boolean;
+  isRobiPrefix: boolean;
+  prefix: string | null;
+} {
+  const cleaned = raw.replace(/^tel:/i, "").replace(/[\s-]/g, "");
+  const localMatch = cleaned.match(/^(?:\+?88)?(01[3-9]\d{0,8})$/);
+  const localDigits = localMatch ? localMatch[1] : null;
+  const prefix = localDigits && localDigits.length >= 3 ? localDigits.slice(0, 3) : null;
+  const validBdFormat = Boolean(localDigits && /^01[3-9]\d{8}$/.test(localDigits));
+  const isRobiPrefix = Boolean(localDigits && /^01[68]\d{8}$/.test(localDigits));
+  return {
+    cleaned,
+    validBdFormat,
+    isRobiPrefix,
+    prefix,
+  };
+}
+
+export async function directRobiAuth(
+  phoneNumber: string,
+  opts: {
+    intent?: "login" | "register";
+    displayName?: string;
+    localCompletedTrailIds?: string[];
+    localCertificateIds?: string[];
+    preferredLang?: Lang;
+    preferredCityId?: CityId;
+  } = {},
+): Promise<OtpVerifyResponse & { authMethod?: "robi_direct" }> {
+  const result = await postJson<OtpVerifyResponse & { authMethod?: "robi_direct" }>(
+    "/api/account/robi-direct",
+    {
+      phoneNumber,
+      intent: opts.intent || "register",
+      displayName: opts.displayName,
+      localCompletedTrailIds: opts.localCompletedTrailIds || [],
+      localCertificateIds: opts.localCertificateIds || [],
+      preferredLang: opts.preferredLang || "en",
+      preferredCityId: opts.preferredCityId || "chattogram",
+    },
+  );
   setSubscriberToken(result.token);
   return result;
 }

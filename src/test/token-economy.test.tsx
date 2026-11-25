@@ -280,52 +280,29 @@ describe("RobiTrail Tokens Economy & Access System", () => {
     expect(mistakeJson.deducted).toBe(1);
     expect(mistakeJson.wallet.balance).toBe(7);
 
-    const failedShop = await robiApi.handle(
+    const blockedShop = await robiApi.handle(
       new Request("http://localhost/api/tokens/shop/purchase", {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({
           packageId: "pkg-6",
-          simulateOutcome: "failure",
-          idempotencyKey: "shop-fail-1",
+          userConfirmed: true,
+          consentAccepted: true,
+          idempotencyKey: "shop-blocked-1",
         }),
       }),
     );
-    expect(failedShop.status).toBe(402);
-    const failedJson = (await failedShop.json()) as {
+    expect(blockedShop.status).toBe(503);
+    const blockedJson = (await blockedShop.json()) as {
       ok: boolean;
-      wallet: { balance: number };
-      transaction: { status: string };
+      blocked: boolean;
+      error: string;
     };
-    expect(failedJson.ok).toBe(false);
-    expect(failedJson.wallet.balance).toBe(7);
-    expect(failedJson.transaction.status).toBe("failed");
+    expect(blockedJson.ok).toBe(false);
+    expect(blockedJson.blocked).toBe(true);
+    expect(blockedJson.error).toMatch(/BDAPPS_MODE|Subscription|gateway/i);
 
-    // 6. Demo Shop success purchase credits +15 tokens (7 -> 22)
-    const successShop = await robiApi.handle(
-      new Request("http://localhost/api/tokens/shop/purchase", {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({
-          packageId: "pkg-15",
-          simulateOutcome: "success",
-          idempotencyKey: "shop-ok-1",
-        }),
-      }),
-    );
-    expect(successShop.status).toBe(200);
-    const okJson = (await successShop.json()) as {
-      ok: boolean;
-      wallet: { balance: number };
-      transaction: { amount: number; priceBdt: number; status: string };
-      smsPreview: { deliveredLive: boolean } | null;
-    };
-    expect(okJson.ok).toBe(true);
-    expect(okJson.wallet.balance).toBe(22);
-    expect(okJson.transaction).toMatchObject({ amount: 15, priceBdt: 10, status: "completed" });
-    expect(okJson.smsPreview?.deliveredLive).toBe(false);
-
-    // 7. Re-register / re-login on same phone preserves balance and never re-awards +10
+    // 6. Re-register / re-login on same phone preserves balance (7) and never re-awards +10
     const relogin = await robiApi.handle(
       new Request("http://localhost/api/account/demo-register", {
         method: "POST",
@@ -338,7 +315,7 @@ describe("RobiTrail Tokens Economy & Access System", () => {
       wallet: { balance: number };
     };
     expect(reloginJson.welcomeGrantedNow).toBe(false);
-    expect(reloginJson.wallet.balance).toBe(22);
+    expect(reloginJson.wallet.balance).toBe(7);
   });
 
   it("renders TokenCenterPage with 6 packages, Buy Now confirmation modal, and Trail-Pass-free AccountPage with mission progress", async () => {
@@ -359,13 +336,13 @@ describe("RobiTrail Tokens Economy & Access System", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText(/Confirm Token Purchase/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/BDT 2 will be charged from your Robi mobile balance/i),
+      screen.getByText(/BDT 2 will be processed via Robi bdapps Subscription API/i),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Cancel/i }));
 
     renderWithProviders(<AccountPage />);
     expect(
-      screen.getByRole("button", { name: /Create Demo Account \(\+10 Tokens\)/i }),
+      screen.getByRole("button", { name: /Create Robi Account \(\+10 Tokens\)/i }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /Create Account/i }));
     expect(screen.getByText(/Robi Mobile Account/i)).toBeInTheDocument();

@@ -5,6 +5,7 @@ import {
   sanitizeTrailIds,
   VALID_TRAIL_IDS,
   type PlayerAccountRecord,
+  type PlayerAuthMethod,
   type CertificateRecord,
   type PublicTokenWallet,
   type SubscriptionRecord,
@@ -22,6 +23,7 @@ export interface TokenPurchaseOrderRecord {
   packageId: string;
   tokens: number;
   priceBdt: number;
+  billingChannel?: "subscription" | "caas";
   status: "pending" | "confirmed" | "failed";
   mode: "live_bdapps";
   providerStatusCode: string;
@@ -404,7 +406,7 @@ export async function fsGetOrInitWallet(
 export async function fsGrantWelcomeTokensOnce(
   msisdn: string,
   accountId: string,
-  options?: FirestoreAdapterOptions,
+  options?: FirestoreAdapterOptions & { mode?: "demo" | "live_bdapps" },
 ): Promise<{
   wallet: PublicTokenWallet;
   grantedNow: boolean;
@@ -458,7 +460,7 @@ export async function fsGrantWelcomeTokensOnce(
       descriptionEn: "Welcome Reward for new verified RobiTrail player",
       descriptionBn: "নতুন যাচাইকৃত রবিট্রেইল খেলোয়াড়ের জন্য স্বাগতম পুরস্কার",
       status: "completed",
-      mode: "live_bdapps",
+      mode: options?.mode || "live_bdapps",
       idempotencyKey,
       createdAt: now,
     };
@@ -508,6 +510,7 @@ export async function fsUnlockGameWithTokens(
     cost?: number;
     trailTitleEn?: string;
     trailTitleBn?: string;
+    mode?: "demo" | "live_bdapps";
     idempotencyKey?: string;
   } = {},
   options?: FirestoreAdapterOptions,
@@ -604,7 +607,7 @@ export async function fsUnlockGameWithTokens(
       descriptionEn: `Unlocked game: ${opts.trailTitleEn || trailId}`,
       descriptionBn: `গেম আনলক: ${opts.trailTitleBn || trailId}`,
       status: "completed",
-      mode: "live_bdapps",
+      mode: opts.mode || "live_bdapps",
       idempotencyKey: key,
       createdAt: now,
     };
@@ -656,6 +659,7 @@ export async function fsRecordMistakePenalty(
     cost?: number;
     trailTitleEn?: string;
     trailTitleBn?: string;
+    mode?: "demo" | "live_bdapps";
     idempotencyKey?: string;
   } = {},
   options?: FirestoreAdapterOptions,
@@ -731,7 +735,7 @@ export async function fsRecordMistakePenalty(
       descriptionEn: `2 gameplay mistakes in ${opts.trailTitleEn || trailId}`,
       descriptionBn: `${opts.trailTitleBn || trailId}-এ ২টি ভুলের জন্য টোকেন কর্তন`,
       status: "completed",
-      mode: "live_bdapps",
+      mode: opts.mode || "live_bdapps",
       idempotencyKey: key,
       createdAt: now,
     };
@@ -784,6 +788,7 @@ export async function fsCreatePendingPurchase(
     packageId: string;
     tokens: number;
     priceBdt: number;
+    billingChannel?: "subscription" | "caas";
   },
   options?: FirestoreAdapterOptions,
 ): Promise<{
@@ -793,6 +798,7 @@ export async function fsCreatePendingPurchase(
 }> {
   const walletKey = hashWalletKey(msisdn);
   const trxDocId = safeDocId(opts.externalTrxId);
+  const billingChannel: "subscription" | "caas" = opts.billingChannel || "subscription";
 
   return runFirestoreTransaction<{
     duplicate: boolean;
@@ -814,6 +820,7 @@ export async function fsCreatePendingPurchase(
       unlockedTrailIds: [],
       transactions: [],
       processedKeys: [],
+      pendingSubscriptionTrxId: null,
       updatedAt: now,
     };
 
@@ -836,10 +843,14 @@ export async function fsCreatePendingPurchase(
       packageId: opts.packageId,
       tokens: opts.tokens,
       priceBdt: opts.priceBdt,
+      billingChannel,
       status: "pending",
       mode: "live_bdapps",
       providerStatusCode: "PENDING",
-      providerStatusDetail: "Awaiting verified bdapps CaaS payment confirmation.",
+      providerStatusDetail:
+        billingChannel === "subscription"
+          ? "Awaiting verified bdapps Subscription confirmation."
+          : "Awaiting verified bdapps CaaS payment confirmation.",
       createdAt: now,
       updatedAt: now,
       settledAt: null,
@@ -858,13 +869,23 @@ export async function fsCreatePendingPurchase(
       },
     ];
 
-    if (!walletSnap.data) {
+    if (!walletSnap.data || billingChannel === "subscription") {
+      const updatedWallet: TokenWalletRecord = {
+        ...wallet,
+        pendingSubscriptionTrxId:
+          billingChannel === "subscription"
+            ? opts.externalTrxId
+            : wallet.pendingSubscriptionTrxId || null,
+        updatedAt: now,
+      };
       writes.push({
         update: {
           name: docPath("wallets", walletKey),
-          fields: encodeFields(wallet as unknown as Record<string, unknown>),
+          fields: encodeFields(updatedWallet as unknown as Record<string, unknown>),
         },
-        currentDocument: { exists: false },
+        currentDocument: walletSnap.updateTime
+          ? { updateTime: walletSnap.updateTime }
+          : { exists: false },
       });
     }
 
@@ -1011,6 +1032,8 @@ export async function fsSettlePurchaseTransaction(
     const updatedWallet: TokenWalletRecord = {
       ...wallet,
       balance: nextBalance,
+      pendingSubscriptionTrxId:
+        wallet.pendingSubscriptionTrxId === externalTrxId ? null : wallet.pendingSubscriptionTrxId || null,
       transactions: [tx, ...(wallet.transactions || [])].slice(0, 50),
       updatedAt: now,
     };
@@ -1057,6 +1080,84 @@ export async function fsSettlePurchaseTransaction(
   }, options);
 }
 
+export async function fsGetPurchaseOrder(
+  externalTrxId: string,
+  options?: FirestoreAdapterOptions,
+): Promise<{
+  purchase: TokenPurchaseOrderRecord | null;
+  wallet: PublicTokenWallet | null;
+  transaction: TokenTransactionRecord | null;
+}> {
+  const trxDocId = safeDocId(externalTrxId);
+  return runFirestoreTransaction<{
+    purchase: TokenPurchaseOrderRecord | null;
+    wallet: PublicTokenWallet | null;
+    transaction: TokenTransactionRecord | null;
+  }>(async ({ getDoc }) => {
+    const trxSnap = await getDoc<TokenPurchaseOrderRecord>("tokenPurchases", trxDocId);
+    if (!trxSnap.data) {
+      return { result: { purchase: null, wallet: null, transaction: null }, writes: [] };
+    }
+    const walletSnap = await getDoc<TokenWalletRecord>("wallets", trxSnap.data.walletKey);
+    const wallet = walletSnap.data ? toPublicWalletFromDoc(walletSnap.data) : null;
+    const transaction =
+      wallet?.transactions.find((tx) => tx.idempotencyKey === externalTrxId) || null;
+    return {
+      result: {
+        purchase: trxSnap.data,
+        wallet,
+        transaction,
+      },
+      writes: [],
+    };
+  }, options);
+}
+
+export async function fsSettlePendingSubscriptionPurchaseForMsisdn(
+  msisdn: string,
+  outcome: "confirmed" | "failed",
+  meta: {
+    providerStatusCode?: string;
+    providerStatusDetail?: string;
+  } = {},
+  options?: FirestoreAdapterOptions,
+): Promise<{
+  found: boolean;
+  alreadySettled: boolean;
+  purchase: TokenPurchaseOrderRecord | null;
+  wallet: PublicTokenWallet | null;
+  transaction: TokenTransactionRecord | null;
+}> {
+  const walletKey = hashWalletKey(msisdn);
+  const pendingTrxId = await runFirestoreTransaction<string | null>(async ({ getDoc }) => {
+    const walletSnap = await getDoc<TokenWalletRecord>("wallets", walletKey);
+    return {
+      result: walletSnap.data?.pendingSubscriptionTrxId || null,
+      writes: [],
+    };
+  }, options);
+
+  if (!pendingTrxId) {
+    return {
+      found: false,
+      alreadySettled: false,
+      purchase: null,
+      wallet: null,
+      transaction: null,
+    };
+  }
+
+  return fsSettlePurchaseTransaction(
+    pendingTrxId,
+    outcome,
+    {
+      ...meta,
+      callbackMsisdn: msisdn,
+    },
+    options,
+  );
+}
+
 export async function fsGetAccount(
   msisdn: string,
   options?: FirestoreAdapterOptions,
@@ -1077,6 +1178,8 @@ export async function fsUpsertAccount(
     certificateIds?: string[];
     preferredLang?: "en" | "bn";
     preferredCityId?: "chattogram" | "dhaka" | "sylhet";
+    authMethod?: PlayerAuthMethod;
+    recordLogin?: boolean;
   } = {},
   options?: FirestoreAdapterOptions,
 ): Promise<PlayerAccountRecord> {
@@ -1115,6 +1218,7 @@ export async function fsUpsertAccount(
       msisdn,
       maskedPhone,
       displayName: cleanName,
+      authMethod: opts.authMethod || existing?.authMethod,
       completedTrailIds: mergedTrails,
       achievements: computeAchievements(mergedTrails, existing?.achievements || []),
       certificateIds: certIds,
@@ -1122,6 +1226,8 @@ export async function fsUpsertAccount(
       preferredCityId,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
+      lastLoginAt:
+        opts.recordLogin || !existing ? now : existing.lastLoginAt || existing.createdAt || now,
     };
 
     return {
@@ -1258,33 +1364,160 @@ interface LoginOtpDoc {
 }
 const OTP_COLLECTION = "robitrail_login_otp";
 const OTP_RATE_COLLECTION = "robitrail_otp_rate";
+const OTP_MAX_PROVIDER_FAILURES_PER_DAY = 10;
 
 export async function fsCreateLoginOtp(referenceNo: string, msisdn: string, codeHash: string, options?: FirestoreAdapterOptions): Promise<{ allowed: boolean; retryAfterSeconds?: number }> {
   const now = Date.now();
   return runFirestoreTransaction<{ allowed: boolean; retryAfterSeconds?: number }>(async ({ getDoc }) => {
     const rateId = hashWalletKey(msisdn);
-    const rate = await getDoc<{ lastRequestedAt: number; windowStart: number; windowCount: number }>(OTP_RATE_COLLECTION, rateId);
+   const rate = await getDoc<{
+  lastRequestedAt: number;
+  windowStart: number;
+  windowCount: number;
+  providerFailureCount?: number;
+  pendingRequestCount?: number;
+}>(OTP_RATE_COLLECTION, rateId);
     const windowStart = now - (rate.data?.windowStart || 0) < 86_400_000 ? (rate.data?.windowStart || now) : now;
     const windowCount = windowStart === rate.data?.windowStart ? (rate.data?.windowCount || 0) : 0;
-    if (windowCount >= 10) return { result: { allowed: false, retryAfterSeconds: Math.ceil((windowStart + 86_400_000 - now) / 1000) }, writes: [] };
+    const pendingRequestCount =
+  windowStart === rate.data?.windowStart
+    ? (rate.data?.pendingRequestCount || 0)
+    : 0;
+    const providerFailureCount =
+  windowStart === rate.data?.windowStart
+    ? (rate.data?.providerFailureCount || 0)
+    : 0;
+    // Reserve at most 10 OTP requests per 24-hour window.
+// Provider failures are tracked separately, but do not
+// release reservations until the full accounting is implemented.
+if (windowCount >= 10) {
+  return {
+    result: {
+      allowed: false,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((windowStart + 86_400_000 - now) / 1000)
+      ),
+    },
+    writes: [],
+  };
+}
+    if (providerFailureCount >= OTP_MAX_PROVIDER_FAILURES_PER_DAY) {
+  return {
+    result: {
+      allowed: false,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((windowStart + 86_400_000 - now) / 1000)
+      ),
+    },
+    writes: [],
+  };
+}
     const delay = 60_000 - (now - (rate.data?.lastRequestedAt || 0));
     if (delay > 0) return { result: { allowed: false, retryAfterSeconds: Math.ceil(delay / 1000) }, writes: [] };
     const challenge: LoginOtpDoc = { msisdn, codeHash, expiresAt: now + 300_000, attempts: 0, used: false, sent: false, createdAt: now };
     return { result: { allowed: true }, writes: [
       { update: { name: docPath(OTP_COLLECTION, safeDocId(referenceNo)), fields: encodeFields(challenge as unknown as Record<string, unknown>) }, currentDocument: { exists: false } },
-      { update: { name: docPath(OTP_RATE_COLLECTION, rateId), fields: encodeFields({ lastRequestedAt: now, windowStart, windowCount: windowCount + 1 }) }, currentDocument: rate.updateTime ? { updateTime: rate.updateTime } : { exists: false } },
+      { update: { name: docPath(OTP_RATE_COLLECTION, rateId), fields: encodeFields({
+  lastRequestedAt: now,
+  windowStart,
+  windowCount: windowCount + 1,
+  providerFailureCount,
+  pendingRequestCount: pendingRequestCount + 1,
+}) }, currentDocument: rate.updateTime ? { updateTime: rate.updateTime } : { exists: false } },
     ] };
  }, options);
 }
 
-export async function fsMarkLoginOtpSent(referenceNo: string, sent: boolean, options?: FirestoreAdapterOptions): Promise<void> {
+
+export async function fsMarkLoginOtpSent(
+  referenceNo: string,
+  sent: boolean,
+  options?: FirestoreAdapterOptions
+): Promise<void> {
   await runFirestoreTransaction(async ({ getDoc }) => {
     const id = safeDocId(referenceNo);
     const current = await getDoc<LoginOtpDoc>(OTP_COLLECTION, id);
-    if (!current.data || current.data.used) return { result: undefined, writes: [] };
-    return { result: undefined, writes: [{ update: { name: docPath(OTP_COLLECTION, id), fields: encodeFields({ ...current.data, sent, used: !sent }) }, currentDocument: { updateTime: current.updateTime } }] };
- }, options);
+
+    if (!current.data || current.data.used || current.data.sent) {
+      return { result: undefined, writes: [] };
+    }
+
+    const writes: Array<{
+      update: {
+        name: string;
+        fields: Record<string, FsValue>;
+      };
+      currentDocument?: {
+        exists?: boolean;
+        updateTime?: string;
+      };
+    }> = [
+      {
+        update: {
+          name: docPath(OTP_COLLECTION, id),
+          fields: encodeFields({
+            ...current.data,
+            sent,
+            used: !sent,
+          }),
+        },
+        currentDocument: {
+          updateTime: current.updateTime,
+        },
+      },
+    ];
+
+    {
+      const rateId = hashWalletKey(current.data.msisdn);
+
+      const rate = await getDoc<{
+        lastRequestedAt: number;
+        windowStart: number;
+        windowCount: number;
+        providerFailureCount?: number;
+        pendingRequestCount?: number;
+      }>(OTP_RATE_COLLECTION, rateId);
+
+      if (rate.data) {
+        const sameWindow =
+          rate.data.windowStart <= current.data.createdAt &&
+          current.data.createdAt < rate.data.windowStart + 86_400_000;
+
+        if (sameWindow) {
+          writes.push({
+            update: {
+              name: docPath(OTP_RATE_COLLECTION, rateId),
+fields: encodeFields({
+  ...rate.data,
+  windowCount: sent
+    ? rate.data.windowCount
+    : Math.max(0, (rate.data.windowCount || 0) - 1),
+  pendingRequestCount: Math.max(
+    0,
+    (rate.data.pendingRequestCount || 0) - 1
+  ),
+  providerFailureCount: sent
+    ? (rate.data.providerFailureCount || 0)
+    : (rate.data.providerFailureCount || 0) + 1,
+}),
+            },
+            currentDocument: {
+              updateTime: rate.updateTime,
+            },
+          });
+        }
+      }
+    }
+
+    return {
+      result: undefined,
+      writes,
+    };
+  }, options);
 }
+
 
 export async function fsConsumeLoginOtp(referenceNo: string, codeHash: string, options?: FirestoreAdapterOptions): Promise<{ ok: boolean; msisdn?: string; reason: string }> {
   return runFirestoreTransaction(async ({ getDoc }) => {

@@ -65,12 +65,14 @@
         "accountId": { "type": "string", "minLength": 4, "maxLength": 64 },
         "maskedPhone": { "type": "string", "maxLength": 32 },
         "displayName": { "type": "string", "maxLength": 60 },
+        "authMethod": { "type": "string", "enum": ["robi_direct", "otp", "demo"] },
         "completedTrailIds": { "type": "array" },
         "certificateIds": { "type": "array" },
         "preferredLang": { "type": "string", "enum": ["en", "bn"] },
         "preferredCityId": { "type": "string", "enum": ["chattogram", "dhaka", "sylhet"] },
         "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "updatedAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
       },
       "required": ["accountId", "maskedPhone", "displayName", "createdAt", "updatedAt"]
     },

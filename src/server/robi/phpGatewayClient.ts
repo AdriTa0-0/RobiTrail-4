@@ -277,14 +277,36 @@ export async function getSubscriptionStatusViaPhpGateway(msisdn: string, fetcher
 export async function subscribeViaPhpGateway(
   msisdn: string,
   consentAccepted: boolean,
-  fetcher?: typeof fetch,
+  optsOrFetcher?:
+    | typeof fetch
+    | {
+        packageId?: string;
+        tokens?: number;
+        priceBdt?: number;
+        externalTrxId?: string;
+        fetcher?: typeof fetch;
+      },
 ) {
+  const opts = typeof optsOrFetcher === "function" ? { fetcher: optsOrFetcher } : optsOrFetcher || {};
   return callPhpGateway<{
     ok?: boolean;
     blocked?: boolean;
     statusCode?: string;
     statusDetail?: string;
-  }>("subscription_subscribe.php", { msisdn, consentAccepted }, fetcher);
+    subscriptionStatus?: string;
+    error?: string;
+  }>(
+    "subscription_subscribe.php",
+    {
+      msisdn,
+      consentAccepted,
+      ...(opts.packageId ? { packageId: opts.packageId } : {}),
+      ...(typeof opts.tokens === "number" ? { tokens: opts.tokens } : {}),
+      ...(typeof opts.priceBdt === "number" ? { priceBdt: opts.priceBdt } : {}),
+      ...(opts.externalTrxId ? { externalTrxId: opts.externalTrxId } : {}),
+    },
+    opts.fetcher,
+  );
 }
 
 export async function unsubscribeViaPhpGateway(msisdn: string, fetcher?: typeof fetch) {

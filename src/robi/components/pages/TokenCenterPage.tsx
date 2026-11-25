@@ -66,8 +66,8 @@ export const TokenCenterPage: React.FC = () => {
             </h1>
             <p className="text-sm text-slate-700 leading-relaxed">
               {lang === "bn"
-                ? "রবিট্রেইল টোকেন হলো গেম আনলক ও অনুশীলনের সহজ ডিজিটাল ব্যালেন্স। কোনো সাবস্ক্রিপশন, মাসিক ফি বা স্বয়ংক্রিয় নবায়ন নেই—কেনা টোকেন খরচ না হওয়া পর্যন্ত আজীবন ব্যবহার করা যায়।"
-                : "RobiTrail Tokens are a simple, one-time balance used to unlock adventures and track gameplay—with zero subscription, zero renewal, and zero expiration."}
+                ? "রবিট্রেইল টোকেন হলো গেম আনলক ও অনুশীলনের সহজ ডিজিটাল ব্যালেন্স। bdapps সাবস্ক্রিপশন API-এর মাধ্যমে কেনা টোকেন খরচ না হওয়া পর্যন্ত আজীবন ব্যবহার করা যায়।"
+                : "RobiTrail Tokens unlock adventures and track gameplay—powered by Robi bdapps Subscription API with zero token expiration."}
             </p>
           </div>
 
@@ -109,8 +109,8 @@ export const TokenCenterPage: React.FC = () => {
             </div>
             <div className="text-xs font-mono text-slate-500">
               {lang === "bn"
-                ? "এককালীন ব্যালেন্স · সাবস্ক্রিপশন নয়"
-                : "One-Time Balance · Not a Subscription"}
+                ? "bdapps সাবস্ক্রিপশন · মেয়াদহীন টোকেন"
+                : "bdapps Subscription · Never Expire"}
             </div>
           </div>
 

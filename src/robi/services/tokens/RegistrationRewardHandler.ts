@@ -1,7 +1,11 @@
 import { getSubscriberToken, setSubscriberToken } from "../auth/sessionMemory";
 import type { CityId } from "../../context/RobiTrailContext";
 import type { Lang } from "../../data/translations/dictionary";
-import type { ServerAccountProfile, SubscriptionState } from "../bdapps/bdappsClient";
+import type {
+  PersistenceBackend,
+  ServerAccountProfile,
+  SubscriptionState,
+} from "../bdapps/bdappsClient";
 import type {
   SmsPreviewNotification,
   TokenTransaction,
@@ -49,6 +53,8 @@ export async function registerDemoPreviewAccount(
 ): Promise<{
   verified: boolean;
   mode: "preview";
+  persistenceBackend?: PersistenceBackend;
+  persistedToFirestore?: boolean;
   token: string;
   maskedNumber: string;
   accountActivated: boolean;
@@ -67,6 +73,8 @@ export async function registerDemoPreviewAccount(
   const data = (await res.json()) as {
     verified: boolean;
     mode: "preview";
+    persistenceBackend?: PersistenceBackend;
+    persistedToFirestore?: boolean;
     token: string;
     maskedNumber: string;
     accountActivated: boolean;

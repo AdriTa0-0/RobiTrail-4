@@ -28,7 +28,7 @@ export const TokenWalletSummary: React.FC = () => {
           <span>{lang === "bn" ? "ওয়ালেট সারসংক্ষেপ" : "Wallet Summary"}</span>
         </div>
         <div className="text-xs text-slate-500 font-mono">
-          {lang === "bn" ? "কোনো মেয়াদ বা নবায়ন নেই" : "No Expiry · No Subscription"}
+          {lang === "bn" ? "কোনো মেয়াদ নেই · bdapps" : "No Expiry · bdapps Wallet"}
         </div>
       </div>
 

@@ -71,16 +71,16 @@ export const TokenAccessModals: React.FC = () => {
 
             <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
               {lang === "bn"
-                ? "আপনার অগ্রগতি সংরক্ষণ করতে, সম্পূর্ণ রবিট্রেইল অভিজ্ঞতা আনলক করতে এবং ১০টি স্বাগতম টোকেন পেতে একটি অ্যাকাউন্ট তৈরি করুন।"
-                : "Create an account to save your progress, unlock the full RobiTrail experience, and receive 10 Welcome Tokens."}
+                ? "আপনার অগ্রগতি সংরক্ষণ করতে, সম্পূর্ণ রবিট্রেইল অভিজ্ঞতা আনলক করতে এবং ১০টি স্বাগতম টোকেন পেতে আপনার ০১৮/০১৬ রবি নম্বর দিয়ে একটি অ্যাকাউন্ট তৈরি করুন।"
+                : "Create an account with your 018/016 Robi mobile number to save your progress, unlock the full RobiTrail experience, and receive 10 Welcome Tokens."}
             </p>
 
             <div className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 flex items-center gap-2 text-xs font-semibold text-amber-950">
               <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
                 {lang === "bn"
-                  ? "নতুন যাচাইকৃত অ্যাকাউন্টে পাবেন +১০টি স্বাগতম টোকেন (ডেমো)"
-                  : "+10 Welcome Tokens awarded once on demo/verified account setup"}
+                  ? "নতুন রবি অ্যাকাউন্টে একবার পাবেন +১০টি স্বাগতম টোকেন"
+                  : "+10 Welcome Tokens awarded once on Robi account setup"}
               </span>
             </div>
 

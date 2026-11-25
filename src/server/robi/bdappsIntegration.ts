@@ -5,9 +5,15 @@
 import {
   chargeCaasViaPhpGateway,
   getPhpGatewayConfig,
+  getSubscriptionStatusViaPhpGateway,
   sendSmsViaPhpGateway,
+  subscribeViaPhpGateway,
 } from "./phpGatewayClient";
-import { getLiveChargingGateStatus, getPersistenceBackend } from "./walletPersistence";
+import {
+  getLiveChargingGateStatus,
+  getLiveSubscriptionGateStatus,
+  getPersistenceBackend,
+} from "./walletPersistence";
 
 export interface TokenShopPackage {
   packageId: string;
@@ -40,6 +46,8 @@ export interface BdappsRuntimeConfig {
   liveChargingEnabled: boolean;
   liveChargingBlockedReason: string | null;
   subscriptionEnabled: boolean;
+  subscriptionGateAllowed: boolean;
+  subscriptionBlockedReason: string | null;
   persistenceBackend: "memory_preview" | "firestore" | "firestore_unconfigured";
 }
 
@@ -53,6 +61,7 @@ export function getBdappsRuntimeConfig(): BdappsRuntimeConfig {
   const mode: "preview" | "production" =
     env.BDAPPS_MODE === "production" ? "production" : "preview";
   const gate = getLiveChargingGateStatus();
+  const subGate = getLiveSubscriptionGateStatus();
 
   return {
     appId,
@@ -64,6 +73,8 @@ export function getBdappsRuntimeConfig(): BdappsRuntimeConfig {
     liveChargingEnabled: gate.allowed,
     liveChargingBlockedReason: gate.reason,
     subscriptionEnabled: phpCfg.subscriptionEnabled,
+    subscriptionGateAllowed: subGate.allowed,
+    subscriptionBlockedReason: subGate.reason,
     persistenceBackend: getPersistenceBackend(),
   };
 }
@@ -142,9 +153,10 @@ export async function dispatchBdappsSmsNotification(
   return {
     ...preview,
     deliveredLive: delivered,
-    notice: res.ok && res.data?.statusCode === "S1000"
-      ? `SMS accepted by bdapps (${cfg.appId}); handset delivery is not confirmed.`
-      : res.error || "PHP bdapps SMS gateway did not accept the message.",
+    notice:
+      res.ok && res.data?.statusCode === "S1000"
+        ? `SMS accepted by bdapps (${cfg.appId}); handset delivery is not confirmed.`
+        : res.error || "PHP bdapps SMS gateway did not accept the message.",
   };
 }
 
@@ -248,5 +260,113 @@ export async function executeBdappsCaasCharge(
           (txState === "pending"
             ? "Awaiting bdapps charging confirmation."
             : "CaaS request declined."),
+  };
+}
+
+export interface SubscriptionPurchaseResult {
+  ok: boolean;
+  blocked?: boolean;
+  httpStatus: number;
+  txState: "pending" | "confirmed" | "failed";
+  mode: "live_bdapps";
+  externalTransactionId: string;
+  statusCode?: string;
+  subscriptionStatus?: string;
+  notice: string;
+}
+
+export function normalizeBdappsSubscriptionStatus(rawStatus: unknown): string {
+  return String(rawStatus || "")
+    .replace(/[. ]+$/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+export async function executeBdappsSubscriptionPurchase(
+  msisdn: string,
+  pkg: TokenShopPackage,
+  idempotencyKey: string,
+  opts: { userConfirmed?: boolean; fetcher?: typeof fetch } = {},
+): Promise<SubscriptionPurchaseResult> {
+  const gate = getLiveSubscriptionGateStatus();
+  if (!gate.allowed) {
+    return {
+      ok: false,
+      blocked: true,
+      httpStatus: 503,
+      txState: "failed",
+      mode: "live_bdapps",
+      externalTransactionId: idempotencyKey,
+      statusCode: "SUBSCRIPTION_GATEWAY_UNCONFIGURED",
+      notice: gate.reason || "Live bdapps Subscription API is not configured.",
+    };
+  }
+
+  if (opts.userConfirmed !== true) {
+    return {
+      ok: false,
+      blocked: true,
+      httpStatus: 400,
+      txState: "failed",
+      mode: "live_bdapps",
+      externalTransactionId: idempotencyKey,
+      statusCode: "USER_CONFIRMATION_REQUIRED",
+      notice: "Explicit user consent is required before initiating bdapps subscription.",
+    };
+  }
+
+  const subRes = await subscribeViaPhpGateway(msisdn, true, {
+    packageId: pkg.packageId,
+    tokens: pkg.tokens,
+    priceBdt: pkg.priceBdt,
+    externalTrxId: idempotencyKey,
+    fetcher: opts.fetcher,
+  });
+
+  if (!subRes.ok || subRes.data?.blocked) {
+    const isGatewayUnavailable =
+      Boolean(subRes.data?.blocked) || subRes.httpStatus >= 500 || subRes.httpStatus === 0;
+    return {
+      ok: false,
+      blocked: Boolean(subRes.data?.blocked) || isGatewayUnavailable,
+      httpStatus: isGatewayUnavailable ? (subRes.httpStatus >= 500 ? subRes.httpStatus : 502) : 402,
+      txState: "failed",
+      mode: "live_bdapps",
+      externalTransactionId: idempotencyKey,
+      statusCode:
+        typeof subRes.data?.statusCode === "string"
+          ? subRes.data.statusCode
+          : isGatewayUnavailable
+            ? "GATEWAY_ERROR"
+            : "SUBSCRIPTION_DECLINED",
+      subscriptionStatus: normalizeBdappsSubscriptionStatus(subRes.data?.subscriptionStatus),
+      notice:
+        subRes.error ||
+        (typeof subRes.data?.statusDetail === "string" && subRes.data.statusDetail) ||
+        "bdapps Subscription gateway declined the purchase request.",
+    };
+  }
+
+  const immediateStatus = normalizeBdappsSubscriptionStatus(subRes.data?.subscriptionStatus);
+  const statusCheck = await getSubscriptionStatusViaPhpGateway(msisdn, opts.fetcher);
+  const checkedStatus = statusCheck.ok
+    ? normalizeBdappsSubscriptionStatus(statusCheck.data?.subscriptionStatus)
+    : "";
+
+  const effectiveStatus = checkedStatus || immediateStatus || "PENDING";
+  const confirmed = effectiveStatus === "REGISTERED";
+
+  return {
+    ok: true,
+    blocked: false,
+    httpStatus: confirmed ? 200 : 202,
+    txState: confirmed ? "confirmed" : "pending",
+    mode: "live_bdapps",
+    externalTransactionId: idempotencyKey,
+    statusCode: typeof subRes.data?.statusCode === "string" ? subRes.data.statusCode : "S1000",
+    subscriptionStatus: effectiveStatus,
+    notice: confirmed
+      ? `bdapps subscription confirmed (${effectiveStatus}); +${pkg.tokens} tokens credited.`
+      : "Subscription request submitted via bdapps. Pack tokens will be credited once carrier confirmation arrives.",
   };
 }

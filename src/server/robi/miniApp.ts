@@ -3,6 +3,7 @@ export interface Request {
   body: Record<string, unknown>;
   rawBody?: string;
   params: Record<string, string>;
+  query: Record<string, string>;
   headers: Record<string, string | undefined>;
   [key: string]: unknown;
 }
@@ -66,9 +67,13 @@ export function createMiniApp() {
           rawBody && typeof rawBody === "object" && !Array.isArray(rawBody)
             ? (rawBody as Record<string, unknown>)
             : {};
+        const query: Record<string, string> = {};
+        url.searchParams.forEach((v, k) => {
+          query[k] = v;
+        });
         const headers: Record<string, string> = {};
         r.headers.forEach((v, k) => (headers[k] = v));
-        const req: Request = { body, rawBody: rawText, params, headers };
+        const req: Request = { body, rawBody: rawText, params, query, headers };
         let statusCode = 200;
         let payload: unknown = null;
         let done = false;

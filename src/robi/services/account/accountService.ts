@@ -1,11 +1,17 @@
 import { getSubscriberToken } from "../auth/sessionMemory";
 import type { CityId } from "../../context/RobiTrailContext";
 import type { Lang } from "../../data/translations/dictionary";
-import type { ServerAccountProfile, SubscriptionState } from "../bdapps/bdappsClient";
+import type {
+  PersistenceBackend,
+  ServerAccountProfile,
+  SubscriptionState,
+} from "../bdapps/bdappsClient";
 import type { TokenWalletState } from "../tokens/TokenTransactionService";
 
 export async function fetchCurrentAccount(): Promise<{
   mode: "preview" | "production";
+  persistenceBackend?: PersistenceBackend;
+  persistedToFirestore?: boolean;
   account: ServerAccountProfile;
   subscription: SubscriptionState;
   wallet?: TokenWalletState;
@@ -17,6 +23,8 @@ export async function fetchCurrentAccount(): Promise<{
   });
   const data = (await res.json()) as {
     mode: "preview" | "production";
+    persistenceBackend?: PersistenceBackend;
+    persistedToFirestore?: boolean;
     account: ServerAccountProfile;
     subscription: SubscriptionState;
     wallet?: TokenWalletState;

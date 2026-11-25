@@ -4,7 +4,11 @@ import { type CityConfig, getCityById } from "../data/cities/cities";
 import { TRAILS, type TrailConfig, getTrailById } from "../data/trails/trails";
 import { useAppRouter } from "../router/RouterContext";
 import { clearSubscriberToken, getSubscriberToken } from "../services/auth/sessionMemory";
-import type { ServerAccountProfile, SubscriptionState } from "../services/bdapps/bdappsClient";
+import type {
+  PersistenceBackend,
+  ServerAccountProfile,
+  SubscriptionState,
+} from "../services/bdapps/bdappsClient";
 import {
   deleteServerAccount,
   fetchCurrentAccount,
@@ -28,7 +32,10 @@ import {
   claimWelcomeTokensOnce,
   registerDemoPreviewAccount,
 } from "../services/tokens/RegistrationRewardHandler";
-import { purchaseTokenPackage } from "../services/tokens/TokenShopService";
+import {
+  checkTokenPurchaseStatus,
+  purchaseTokenPackage,
+} from "../services/tokens/TokenShopService";
 import {
   findFreeIntroTrail,
   isFreeIntroTrail,
@@ -170,11 +177,16 @@ interface RobiTrailContextValue {
   signedIn: boolean;
   accountProfile: ServerAccountProfile | null;
   subscriptionState: SubscriptionState | null;
+  persistenceBackend: PersistenceBackend | null;
   applyVerifiedSession: (
     account: ServerAccountProfile | null,
     subscription: SubscriptionState | null,
     wallet?: TokenWalletState | null,
-    opts?: { welcomeGrantedNow?: boolean; smsPreview?: SmsPreviewNotification | null },
+    opts?: {
+      welcomeGrantedNow?: boolean;
+      smsPreview?: SmsPreviewNotification | null;
+      persistenceBackend?: PersistenceBackend;
+    },
   ) => void;
   refreshAccountFromServer: () => Promise<void>;
   signOutAccount: () => void;
@@ -194,10 +206,21 @@ interface RobiTrailContextValue {
   claimWelcomeReward: () => Promise<void>;
   demoRegisterAccount: (opts?: { displayName?: string; phoneNumber?: string }) => Promise<void>;
   unlockTrailWithTokens: (trailId: string) => Promise<boolean>;
-  purchaseTokensFromShop: (
-    packageId: string,
-    simulateOutcome?: "success" | "failure",
-  ) => Promise<{ ok: boolean; transaction: TokenTransaction | null }>;
+  purchaseTokensFromShop: (packageId: string) => Promise<{
+    ok: boolean;
+    pendingConfirmation?: boolean;
+    externalTrxId?: string | null;
+    transaction: TokenTransaction | null;
+    error?: string;
+    notice?: string;
+  }>;
+  checkShopOrderStatus: (externalTrxId: string) => Promise<{
+    ok: boolean;
+    pendingConfirmation?: boolean;
+    transaction: TokenTransaction | null;
+    error?: string;
+    notice?: string;
+  }>;
   reportGameMistake: (trailId: string, actionKey: string) => void;
   resetMistakeSession: (trailId?: string) => void;
   mistakeCountInRun: number;
@@ -224,6 +247,7 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [accountProfile, setAccountProfile] = useState<ServerAccountProfile | null>(null);
   const [subscriptionState, setSubscriptionState] = useState<SubscriptionState | null>(null);
+  const [persistenceBackend, setPersistenceBackend] = useState<PersistenceBackend | null>(null);
 
   // RobiTrail Token Economy State
   const [tokenPreviewMode, setTokenPreviewMode] = useState(false);
@@ -284,9 +308,16 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
       account: ServerAccountProfile | null,
       subscription: SubscriptionState | null,
       wallet?: TokenWalletState | null,
-      opts?: { welcomeGrantedNow?: boolean; smsPreview?: SmsPreviewNotification | null },
+      opts?: {
+        welcomeGrantedNow?: boolean;
+        smsPreview?: SmsPreviewNotification | null;
+        persistenceBackend?: PersistenceBackend;
+      },
     ) => {
       setAuthError(null);
+      if (opts?.persistenceBackend) {
+        setPersistenceBackend(opts.persistenceBackend);
+      }
       if (subscription) {
         setSubscriptionState(subscription);
         setPreviewPassActive(Boolean(subscription.entitlementActive));
@@ -344,7 +375,9 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
     setAuthError(null);
     try {
       const data = await fetchCurrentAccount();
-      applyVerifiedSession(data.account, data.subscription, data.wallet || null);
+      applyVerifiedSession(data.account, data.subscription, data.wallet || null, {
+        persistenceBackend: data.persistenceBackend,
+      });
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Failed to refresh account.");
     } finally {
@@ -416,6 +449,7 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
     clearSubscriberToken();
     setAccountProfile(null);
     setSubscriptionState(null);
+    setPersistenceBackend(null);
     setTokenWallet(null);
     setLastSmsPreview(null);
     setPreviewPassActive(false);
@@ -450,6 +484,7 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
       clearCachedWallet(prevAccountId);
       setAccountProfile(null);
       setSubscriptionState(null);
+      setPersistenceBackend(null);
       setTokenWallet(null);
       setLastSmsPreview(null);
       setPreviewPassActive(false);
@@ -597,6 +632,7 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
         applyVerifiedSession(res.account, res.subscription, res.wallet, {
           welcomeGrantedNow: res.welcomeGrantedNow,
           smsPreview: res.smsPreview,
+          persistenceBackend: res.persistenceBackend,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Demo registration failed.";
@@ -668,32 +704,115 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
   );
 
   const purchaseTokensFromShop = useCallback(
-    async (packageId: string, simulateOutcome: "success" | "failure" = "success") => {
+    async (packageId: string) => {
       setTokenBusy(true);
       try {
-        const res = await purchaseTokenPackage(packageId, { simulateOutcome });
-        setTokenWallet(res.wallet);
+        const res = await purchaseTokenPackage(packageId, { consentAccepted: true });
+        if (res.wallet) setTokenWallet(res.wallet);
         if (res.smsPreview) setLastSmsPreview(res.smsPreview);
+
+        if (res.pendingConfirmation) {
+          pushTokenToast({
+            tone: "info",
+            titleEn: "Subscription Confirmation Pending",
+            titleBn: "সাবস্ক্রিপশন নিশ্চিতকরণ অপেক্ষমাণ",
+            detailEn:
+              res.notice ||
+              "Confirm the bdapps subscription prompt on your mobile to receive your tokens.",
+            detailBn: "টোকেন পেতে আপনার মোবাইলে আসা bdapps সাবস্ক্রিপশন নিশ্চিতকরণ সম্পন্ন করুন।",
+          });
+          return {
+            ok: true,
+            pendingConfirmation: true,
+            externalTrxId: res.externalTrxId,
+            transaction: res.transaction,
+            notice: res.notice,
+          };
+        }
+
+        const amountLabel = res.transaction?.amount ? `+${res.transaction.amount} ` : "";
         pushTokenToast({
           tone: "reward",
-          titleEn: `+${res.transaction.amount} Tokens Purchased (Demo)`,
-          titleBn: `+${res.transaction.amount}টি টোকেন যুক্ত হয়েছে (ডেমো)`,
-          detailEn: "Payment simulation succeeded — zero real balance charged.",
-          detailBn: "পেমেন্ট সিমুলেশন সফল — আসল কোনো টাকা কাটা হয়নি।",
+          titleEn: `${amountLabel}Tokens Added via Subscription`,
+          titleBn: `${amountLabel}টোকেন যুক্ত হয়েছে`,
+          detailEn:
+            res.notice || "bdapps subscription confirmed and pack tokens credited to your wallet.",
+          detailBn: "bdapps সাবস্ক্রিপশন নিশ্চিত হয়েছে এবং আপনার ওয়ালেটে টোকেন যুক্ত হয়েছে।",
         });
-        return { ok: true, transaction: res.transaction };
+        return {
+          ok: true,
+          pendingConfirmation: false,
+          externalTrxId: res.externalTrxId,
+          transaction: res.transaction,
+          notice: res.notice,
+        };
       } catch (err) {
         const updatedWallet = (err as { wallet?: TokenWalletState }).wallet;
-        const failedTx = (err as { transaction?: TokenTransaction }).transaction || null;
+        const failedTx = (err as { transaction?: TokenTransaction | null }).transaction || null;
         if (updatedWallet) setTokenWallet(updatedWallet);
+        const message =
+          err instanceof Error
+            ? err.message
+            : "bdapps Subscription gateway could not complete this purchase.";
         pushTokenToast({
           tone: "error",
-          titleEn: "Simulated Payment Failed",
-          titleBn: "সিমুলেটেড পেমেন্ট ব্যর্থ হয়েছে",
-          detailEn: "No tokens were added and no real balance was deducted.",
-          detailBn: "কোনো টোকেন যোগ হয়নি এবং আসল ব্যালেন্স থেকেও টাকা কাটা হয়নি।",
+          titleEn: "Subscription Purchase Failed",
+          titleBn: "সাবস্ক্রিপশন ক্রয় ব্যর্থ হয়েছে",
+          detailEn: message,
+          detailBn: message,
         });
-        return { ok: false, transaction: failedTx };
+        return {
+          ok: false,
+          transaction: failedTx,
+          error: message,
+        };
+      } finally {
+        setTokenBusy(false);
+      }
+    },
+    [pushTokenToast],
+  );
+
+  const checkShopOrderStatus = useCallback(
+    async (externalTrxId: string) => {
+      setTokenBusy(true);
+      try {
+        const res = await checkTokenPurchaseStatus(externalTrxId);
+        if (res.wallet) setTokenWallet(res.wallet);
+        if (res.smsPreview) setLastSmsPreview(res.smsPreview);
+        if (!res.pendingConfirmation && res.ok) {
+          const amountLabel = res.transaction?.amount ? `+${res.transaction.amount} ` : "";
+          pushTokenToast({
+            tone: "reward",
+            titleEn: `${amountLabel}Tokens Confirmed`,
+            titleBn: `${amountLabel}টোকেন নিশ্চিত হয়েছে`,
+            detailEn: res.notice || "bdapps subscription confirmed and pack tokens credited.",
+            detailBn: "bdapps সাবস্ক্রিপশন নিশ্চিত হয়েছে এবং টোকেন যুক্ত হয়েছে।",
+          });
+        }
+        return {
+          ok: res.ok,
+          pendingConfirmation: res.pendingConfirmation,
+          transaction: res.transaction,
+          notice: res.notice,
+        };
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Unable to verify bdapps subscription confirmation status.";
+        pushTokenToast({
+          tone: "error",
+          titleEn: "Status Check Failed",
+          titleBn: "অবস্থা যাচাই ব্যর্থ হয়েছে",
+          detailEn: message,
+          detailBn: message,
+        });
+        return {
+          ok: false,
+          transaction: null,
+          error: message,
+        };
       } finally {
         setTokenBusy(false);
       }
@@ -847,6 +966,7 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
         signedIn: Boolean(accountProfile),
         accountProfile,
         subscriptionState,
+        persistenceBackend,
         applyVerifiedSession,
         refreshAccountFromServer,
         signOutAccount,
@@ -866,6 +986,7 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
         demoRegisterAccount,
         unlockTrailWithTokens,
         purchaseTokensFromShop,
+        checkShopOrderStatus,
         reportGameMistake,
         resetMistakeSession,
         mistakeCountInRun,
