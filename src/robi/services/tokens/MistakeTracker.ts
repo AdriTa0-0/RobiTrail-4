@@ -7,7 +7,6 @@ import { isFreeIntroTrail } from "./GameAccessService";
  * obstacle collisions, Help drawers, and sandbox sliders are never penalized.
  */
 export const MISTAKE_TRACKED_TRAIL_IDS = new Set<string>([
-  "ctg-1", // Robi Sheba — wrong diagnostic cause/channel submission
   "dhk-2", // Connected Everyday — invalid citizen handset dispatch
   "dhk-3", // Speed or Data? — incorrect conclusion answer
   "dhk-5", // Message or Internet? — invalid terminal channel choice
