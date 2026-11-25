@@ -17,6 +17,6 @@
     "BDAPPS_MODE": "production",
     "ROBITRAIL_SMS_LOGIN_ENABLED": "true",
     "BDAPPS_LIVE_CHARGING_ENABLED": "false",
-    "BDAPPS_SUBSCRIPTION_ENABLED": "false"
+    "BDAPPS_SUBSCRIPTION_ENABLED": "true"
   }
 }
