@@ -80,6 +80,12 @@ export const TokenShop: React.FC<{ onPurchaseComplete?: () => void }> = ({ onPur
   };
 
   const verifyOtp = async () => {
+    // bdapps OTP VERIFY may ACTIVATE a subscription. Never activate without
+    // approved subscription terms or carrier checkout authorization.
+    if (!capabilities?.gatewayReady || !capabilities.subscriptionTermsText.trim()) {
+      setError("Subscription OTP verification is unavailable until the provider-approved terms and charging permissions are configured.");
+      return;
+    }
     if (!referenceNo || !/^\d{4,8}$/.test(otp) || busy) return;
     setError(""); setBusy(true);
     try {
@@ -179,7 +185,8 @@ export const TokenShop: React.FC<{ onPurchaseComplete?: () => void }> = ({ onPur
             {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">{error}</div>}
             {!signedIn ? <div className="space-y-4"><p className="text-sm text-slate-700">{bn ? "টোকেন ওয়ালেটে রাখার জন্য প্রথমে অ্যাকাউন্টে লগ-ইন করো।" : "Sign in to your RobiTrail account to receive tokens."}</p><button type="button" onClick={()=>{setPkg(null);navigate("/account");}} className="w-full min-h-[44px] rounded-xl bg-rose-600 text-white font-bold flex justify-center items-center gap-2"><UserPlus className="w-4 h-4"/>{bn ? "অ্যাকাউন্টে যাও" : "Go to Account"}</button></div> : (
               <>
-                {!capabilities?.gatewayReady && <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex gap-2"><AlertTriangle className="w-4 h-4 shrink-0"/><span>{capabilities?.gatewayBlockedReason || (bn ? "bdapps অনুমোদন ও payment configuration বাকি।" : "bdapps provider checkout approval and configuration pending.")}</span></div>}
+                {!capabilities?.otpRequestReady && <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex gap-2"><AlertTriangle className="w-4 h-4 shrink-0"/><span>{capabilities?.otpBlockedReason || (bn ? "bdapps subscription OTP gateway প্রস্তুত নয়।" : "bdapps subscription OTP gateway is unavailable.")}</span></div>}
+                {capabilities?.otpRequestReady && !capabilities?.gatewayReady && <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex gap-2"><AlertTriangle className="w-4 h-4 shrink-0"/><span>{bn ? "শুধু bdapps subscription OTP request করা যাবে। OTP verification, subscription activation এবং token payment এখন বন্ধ।" : "You may request a bdapps subscription OTP. OTP verification, subscription activation and token payment remain unavailable pending approval."}</span></div>}
                 {step === "phone" && <div className="space-y-4">
                   <label className="block text-sm font-semibold text-slate-800" htmlFor="token-checkout-phone">{bn ? "রবি/এয়ারটেল মোবাইল নম্বর" : "Robi/Airtel mobile number"}</label>
                   <input id="token-checkout-phone" type="tel" inputMode="tel" autoComplete="tel" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="018XXXXXXXX" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-950 focus:outline-none focus:border-rose-500"/>
@@ -188,16 +195,16 @@ export const TokenShop: React.FC<{ onPurchaseComplete?: () => void }> = ({ onPur
                     <p className="font-bold">{bn ? "bdapps সাবস্ক্রিপশন সম্পর্কে জরুরি তথ্য" : "Important bdapps subscription information"}</p>
                     <p>{bn ? "bdapps OTP verification-এ subscription activate হতে পারে। এটি token pack-এর এককালীন CaaS charge থেকে আলাদা।" : "bdapps OTP verification may activate a subscription, separate from the one-time CaaS token-pack charge."}</p>
                     <p className="whitespace-pre-wrap">{capabilities?.subscriptionTermsText || (bn ? "অনুমোদিত subscription terms এখনো configure করা হয়নি।" : "Approved subscription terms are not configured yet.")}</p>
-                    <label className="flex gap-2 items-start cursor-pointer"><input type="checkbox" className="mt-0.5 accent-rose-600" checked={providerConsent} onChange={e=>setProviderConsent(e.target.checked)}/><span>{bn ? "আমি bdapps subscription-এর উপরের terms বুঝেছি এবং OTP request-এ সম্মতি দিচ্ছি।" : "I understand the bdapps subscription terms above and consent to requesting its OTP."}</span></label>
+                    <label className="flex gap-2 items-start cursor-pointer"><input type="checkbox" className="mt-0.5 accent-rose-600" checked={providerConsent} onChange={e=>setProviderConsent(e.target.checked)}/><span>{bn ? "আমি এই নম্বরে bdapps subscription OTP পাঠানোর অনুরোধ করছি। OTP verify করলে subscription চালু হতে পারে; approved terms ছাড়া verify করব না।" : "I request a bdapps subscription OTP for this number. Verification can activate a subscription, so I will not verify it without approved terms."}</span></label>
                   </div>
-                  <button type="button" disabled={!capabilities?.gatewayReady || !normalizePhone(phone) || !providerConsent || busy} onClick={()=>void sendOtp()} className="min-h-[44px] w-full bg-rose-600 hover:bg-rose-500 disabled:bg-slate-300 text-white font-bold rounded-xl flex justify-center items-center gap-2"><Smartphone className="w-4 h-4"/>{busy ? (bn ? "পাঠানো হচ্ছে..." : "Sending...") : (bn ? "bdapps OTP পাঠাও" : "Send bdapps OTP")}</button>
+                  <button type="button" disabled={!capabilities?.otpRequestReady || !normalizePhone(phone) || !providerConsent || busy} onClick={()=>void sendOtp()} className="min-h-[44px] w-full bg-rose-600 hover:bg-rose-500 disabled:bg-slate-300 text-white font-bold rounded-xl flex justify-center items-center gap-2"><Smartphone className="w-4 h-4"/>{busy ? (bn ? "পাঠানো হচ্ছে..." : "Sending...") : (bn ? "bdapps OTP পাঠাও" : "Send bdapps OTP")}</button>
                 </div>}
                 {step === "otp" && <div className="space-y-4">
                   <p className="text-sm text-slate-700">{bn ? `bdapps ${maskedNumber} নম্বরে OTP পাঠানোর অনুরোধ গ্রহণ করেছে।` : `bdapps accepted the OTP request for ${maskedNumber}.`}</p>
                   <label htmlFor="token-checkout-otp" className="block text-sm font-semibold">{bn ? "SMS-এ পাওয়া OTP" : "OTP from SMS"}</label>
                   <input id="token-checkout-otp" value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g, "").slice(0, 8))} type="text" inputMode="numeric" autoComplete="one-time-code" placeholder="••••••" className="w-full rounded-xl border border-slate-300 p-3 text-center tracking-[0.5em] text-xl font-bold text-slate-950"/>
-                  <p className="text-xs text-amber-800">{bn ? "OTP verify করলে bdapps subscription activate হতে পারে। এটি payment confirmation নয়।" : "OTP verification may activate a bdapps subscription. This is not payment confirmation."}</p>
-                  <button type="button" disabled={!/^\d{4,8}$/.test(otp) || busy} onClick={()=>void verifyOtp()} className="w-full min-h-[44px] rounded-xl bg-rose-600 hover:bg-rose-500 disabled:bg-slate-300 text-white font-bold flex justify-center items-center gap-2"><KeyRound className="w-4 h-4"/>{busy ? (bn ? "যাচাই চলছে..." : "Verifying...") : (bn ? "bdapps OTP যাচাই করো" : "Verify bdapps OTP")}</button>
+                  <p className="text-xs text-amber-800">{bn ? "OTP verify করলে bdapps subscription activate হতে পারে। Approved terms এবং billing approval না থাকায় verification/payment আপাতত বন্ধ।" : "OTP verification may activate a bdapps subscription. Verification/payment remain disabled until approved terms and billing permissions are configured."}</p>
+                  <button type="button" disabled={!capabilities?.gatewayReady || !capabilities?.subscriptionTermsText.trim() || !/^\d{4,8}$/.test(otp) || busy} onClick={()=>void verifyOtp()} className="w-full min-h-[44px] rounded-xl bg-rose-600 hover:bg-rose-500 disabled:bg-slate-300 text-white font-bold flex justify-center items-center gap-2"><KeyRound className="w-4 h-4"/>{busy ? (bn ? "যাচাই চলছে..." : "Verifying...") : (bn ? "bdapps OTP যাচাই করো" : "Verify bdapps OTP")}</button>
                 </div>}
                 {step === "payment" && <div className="space-y-4">
                   <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm flex items-center gap-2"><ShieldCheck className="w-4 h-4"/>{bn ? "bdapps OTP যাচাই সফল" : "bdapps OTP verified"}</div>
