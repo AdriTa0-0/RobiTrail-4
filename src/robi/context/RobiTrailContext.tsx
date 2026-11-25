@@ -727,12 +727,12 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
         if (res.pendingConfirmation) {
           pushTokenToast({
             tone: "info",
-            titleEn: "Subscription Confirmation Pending",
-            titleBn: "সাবস্ক্রিপশন নিশ্চিতকরণ অপেক্ষমাণ",
+            titleEn: "CaaS Payment Confirmation Pending",
+            titleBn: "পেমেন্ট নিশ্চিতকরণ অপেক্ষমাণ",
             detailEn:
               res.notice ||
-              "Confirm the bdapps subscription prompt on your mobile to receive your tokens.",
-            detailBn: "টোকেন পেতে আপনার মোবাইলে আসা bdapps সাবস্ক্রিপশন নিশ্চিতকরণ সম্পন্ন করুন।",
+              "Await verified bdapps CaaS payment confirmation before tokens are credited.",
+            detailBn: "bdapps থেকে পেমেন্ট নিশ্চিত হওয়ার পর টোকেন যোগ হবে। আবার পেমেন্ট করবেন না।",
           });
           return {
             ok: true,
@@ -746,11 +746,11 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
         const amountLabel = res.transaction?.amount ? `+${res.transaction.amount} ` : "";
         pushTokenToast({
           tone: "reward",
-          titleEn: `${amountLabel}Tokens Added via Subscription`,
+          titleEn: `${amountLabel}Tokens Added via CaaS`,
           titleBn: `${amountLabel}টোকেন যুক্ত হয়েছে`,
           detailEn:
-            res.notice || "bdapps subscription confirmed and pack tokens credited to your wallet.",
-          detailBn: "bdapps সাবস্ক্রিপশন নিশ্চিত হয়েছে এবং আপনার ওয়ালেটে টোকেন যুক্ত হয়েছে।",
+            res.notice || "bdapps CaaS payment confirmed and tokens credited to your wallet.",
+          detailBn: "bdapps পেমেন্ট নিশ্চিত হয়েছে এবং আপনার ওয়ালেটে টোকেন যুক্ত হয়েছে।",
         });
         return {
           ok: true,
@@ -766,11 +766,11 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
         const message =
           err instanceof Error
             ? err.message
-            : "bdapps Subscription gateway could not complete this purchase.";
+            : "bdapps CaaS gateway could not complete this purchase.";
         pushTokenToast({
           tone: "error",
-          titleEn: "Subscription Purchase Failed",
-          titleBn: "সাবস্ক্রিপশন ক্রয় ব্যর্থ হয়েছে",
+          titleEn: "Carrier Payment Failed",
+          titleBn: "পেমেন্ট ব্যর্থ হয়েছে",
           detailEn: message,
           detailBn: message,
         });
@@ -799,8 +799,8 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
             tone: "reward",
             titleEn: `${amountLabel}Tokens Confirmed`,
             titleBn: `${amountLabel}টোকেন নিশ্চিত হয়েছে`,
-            detailEn: res.notice || "bdapps subscription confirmed and pack tokens credited.",
-            detailBn: "bdapps সাবস্ক্রিপশন নিশ্চিত হয়েছে এবং টোকেন যুক্ত হয়েছে।",
+            detailEn: res.notice || "bdapps CaaS payment confirmed and tokens credited.",
+            detailBn: "bdapps পেমেন্ট নিশ্চিত হয়েছে এবং টোকেন যুক্ত হয়েছে।",
           });
         }
         return {
