@@ -379,11 +379,24 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
         persistenceBackend: data.persistenceBackend,
       });
     } catch (err) {
+      // If token expired or account removed on backend, clear invalid session
+      if (err instanceof Error && /401|unauthorized|not authenticated/i.test(err.message)) {
+        clearSubscriberToken();
+        setAccountProfile(null);
+        setTokenWallet(null);
+      }
       setAuthError(err instanceof Error ? err.message : "Failed to refresh account.");
     } finally {
       setAuthBusy(false);
     }
   }, [applyVerifiedSession]);
+
+  // Restore authenticated session and wallet on initial app mount
+  useEffect(() => {
+    if (getSubscriberToken() && !accountProfile) {
+      void refreshAccountFromServer();
+    }
+  }, [accountProfile, refreshAccountFromServer]);
 
   const setLang = useCallback((lang: Lang) => {
     setState((prev) => ({ ...prev, lang }));
