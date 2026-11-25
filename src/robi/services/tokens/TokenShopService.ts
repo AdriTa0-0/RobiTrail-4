@@ -16,6 +16,8 @@ export interface TokenShopPackagesResponse {
   phpGatewayConfigured: boolean;
   gatewayReady: boolean;
   gatewayBlockedReason: string | null;
+  otpRequestReady: boolean;
+  otpBlockedReason: string | null;
   packages: TokenPackage[];
 }
 
@@ -45,6 +47,8 @@ export async function fetchTokenShopPackages(): Promise<TokenShopPackagesRespons
       phpGatewayConfigured: Boolean(data.phpGatewayConfigured),
       gatewayReady: Boolean(data.gatewayReady),
       gatewayBlockedReason: data.gatewayBlockedReason || null,
+      otpRequestReady: Boolean(data.otpRequestReady),
+      otpBlockedReason: data.otpBlockedReason || null,
       packages:
         Array.isArray(data.packages) && data.packages.length > 0
           ? data.packages
@@ -59,6 +63,8 @@ export async function fetchTokenShopPackages(): Promise<TokenShopPackagesRespons
       phpGatewayConfigured: false,
       gatewayReady: false,
       gatewayBlockedReason: "Unable to verify bdapps Subscription gateway status.",
+      otpRequestReady: false,
+      otpBlockedReason: "Unable to verify bdapps OTP gateway status.",
       packages: [...TOKEN_PACKAGES],
     };
   }
@@ -204,8 +210,8 @@ export async function requestTokenCheckoutOtp(phoneNumber: string): Promise<{
   notice?: string;
 }> {
   return checkoutPost("/api/bdapps/subscription/otp/request", {
-    purpose: "token_purchase", phoneNumber,
-    consentAccepted: true, termsAccepted: true,
+    purpose: "token_purchase", phoneNumber, deliveryOnly: true,
+    consentAccepted: true, termsAccepted: false,
   });
 }
 
