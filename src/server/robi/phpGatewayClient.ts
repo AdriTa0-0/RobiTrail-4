@@ -206,10 +206,9 @@ export async function sendSmsViaPhpGateway(
   }>("sms_send.php", { msisdn, message }, fetcher);
 }
 
+/** Provider-owned OTP; ONLY for subscriber-consented subscription activation. */
 export async function requestOtpViaPhpGateway(
   msisdn: string,
-  referenceNo: string,
-  intent: "register" | "login" = "register",
   fetcher?: typeof fetch,
 ) {
   return callPhpGateway<{
@@ -218,7 +217,7 @@ export async function requestOtpViaPhpGateway(
     statusDetail?: string;
     referenceNo?: string;
     subscriptionActivated?: boolean;
-  }>("otp_request.php", { msisdn, referenceNo, intent }, fetcher);
+  }>("otp_request.php", { msisdn, intent: "subscribe", consentAccepted: true }, fetcher);
 }
 
 export async function verifyOtpViaPhpGateway(
@@ -232,8 +231,9 @@ export async function verifyOtpViaPhpGateway(
     verified?: boolean;
     statusCode?: string;
     statusDetail?: string;
+    subscriptionStatus?: string;
     subscriptionActivated?: boolean;
-  }>("otp_verify.php", { msisdn, referenceNo, otp }, fetcher);
+  }>("otp_verify.php", { msisdn, referenceNo, otp, intent: "subscribe", consentAccepted: true }, fetcher);
 }
 
 export async function queryCaasBalanceViaPhpGateway(msisdn: string, fetcher?: typeof fetch) {

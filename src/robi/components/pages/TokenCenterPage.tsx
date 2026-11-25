@@ -22,7 +22,7 @@ export const TokenCenterPage: React.FC = () => {
     {
       icon: Gift,
       bn: "নিবন্ধনের পর ১০টি স্বাগতম টোকেন পাবেন",
-      en: "Receive 10 free welcome tokens after Robi-number registration and OTP verification",
+      en: "Receive 10 free welcome tokens after Robi-number registration",
     },
     {
       icon: Compass,
@@ -66,8 +66,8 @@ export const TokenCenterPage: React.FC = () => {
             </h1>
             <p className="text-sm text-slate-700 leading-relaxed">
               {lang === "bn"
-                ? "রবিট্রেইল টোকেন হলো গেম আনলক ও অনুশীলনের সহজ ডিজিটাল ব্যালেন্স। bdapps সাবস্ক্রিপশন API-এর মাধ্যমে কেনা টোকেন খরচ না হওয়া পর্যন্ত আজীবন ব্যবহার করা যায়।"
-                : "RobiTrail Tokens unlock adventures and track gameplay—powered by Robi bdapps Subscription API with zero token expiration."}
+                ? "রবিট্রেইল টোকেন হলো গেম আনলক ও অনুশীলনের সহজ ডিজিটাল ব্যালেন্স। bdapps CaaS API-এর মাধ্যমে কেনা টোকেন খরচ না হওয়া পর্যন্ত আজীবন ব্যবহার করা যায়।"
+                : "RobiTrail Tokens unlock adventures and track gameplay—powered by Robi bdapps CaaS API with zero token expiration."}
             </p>
           </div>
 
@@ -109,8 +109,8 @@ export const TokenCenterPage: React.FC = () => {
             </div>
             <div className="text-xs font-mono text-slate-500">
               {lang === "bn"
-                ? "bdapps সাবস্ক্রিপশন · মেয়াদহীন টোকেন"
-                : "bdapps Subscription · Never Expire"}
+                ? "bdapps CaaS · মেয়াদহীন টোকেন"
+                : "bdapps CaaS · Never Expire"}
             </div>
           </div>
 

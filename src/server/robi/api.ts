@@ -16,11 +16,13 @@ import {
 } from "./bdappsIntegration";
 import {
   getSubscriptionStatusViaPhpGateway,
+  chargeCaasViaPhpGateway,
   queryCaasBalanceViaPhpGateway,
   subscribeViaPhpGateway,
   unsubscribeViaPhpGateway,
   verifyPhpCallbackSignature,
-  sendSmsViaPhpGateway,
+  requestOtpViaPhpGateway,
+  verifyOtpViaPhpGateway,
 } from "./phpGatewayClient";
 import {
   createLivePendingPurchase,
@@ -46,7 +48,6 @@ import {
 import {
   fsCreateLoginOtp,
   fsMarkLoginOtpSent,
-  fsConsumeLoginOtp,
   isFirestorePersistenceConfigured,
 } from "./firestoreWalletStore";
 import { createMiniApp, type Request, type Response, type NextFunction } from "./miniApp";
@@ -66,14 +67,6 @@ function getSigningKey(): string {
   return cachedKey;
 }
 
-/** Separate domain for login OTPs; reuses the already-configured production session secret. */
-function getOtpHmacKey(): Buffer | null {
-  const env = process.env as Record<string, string | undefined>;
-  const input = env.OTP_HASH_SECRET?.trim() || env.SESSION_SIGNING_KEY?.trim() || "";
-  if (input.length < 32 || input.startsWith("REPLACE_WITH_")) return null;
-  return crypto.createHmac("sha256", input).update("RobiTrail/SMS-OTP/v1").digest();
-}
-
 function getRuntimeSettings() {
   const cfg = getBdappsRuntimeConfig();
   return {
@@ -85,6 +78,21 @@ function getRuntimeSettings() {
     liveChargingEnabled: cfg.liveChargingEnabled,
     subscriptionEnabled: cfg.subscriptionEnabled,
   };
+}
+
+// Separate bdapps approval gate for CaaS checkout. OTP verification may activate
+// a subscription, so both subscription consent and one-time charging approval
+// must be configured before requesting a token-purchase OTP.
+function tokenCheckoutGate(): { allowed: boolean; reason: string | null } {
+  const sub = getLiveSubscriptionGateStatus();
+  const charge = getLiveChargingGateStatus();
+  if (!sub.allowed) return sub;
+  if (!charge.allowed) return charge;
+  if (process.env.ROBITRAIL_CARRIER_CHECKOUT_APPROVED !== "true" ||
+      !(process.env.ROBITRAIL_SUBSCRIPTION_TERMS_TEXT || "").trim()) {
+    return { allowed: false, reason: "Checkout requires explicit bdapps approval and the approved subscription disclosure text." };
+  }
+  return { allowed: true, reason: null };
 }
 
 function buildSubscriptionDisclosure(mode: "preview" | "production", shortCode: string) {
@@ -99,16 +107,6 @@ function buildSubscriptionDisclosure(mode: "preview" | "production", shortCode: 
     shortCode,
   };
 }
-
-interface OtpChallenge {
-  referenceNo: string;
-  msisdn: string;
-  previewCode: string;
-  expiresAt: number;
-  attempts: number;
-}
-
-const otpChallenges = new Map<string, OtpChallenge>();
 
 function normalizeMsisdn(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
@@ -131,6 +129,7 @@ function signToken(payload: {
   msisdn: string;
   mode: "preview" | "production";
   exp: number;
+  providerVerifiedUntil?: number;
 }): string {
   const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   const sig = crypto.createHmac("sha256", getSigningKey()).update(body).digest("base64url");
@@ -139,7 +138,7 @@ function signToken(payload: {
 
 function verifyToken(
   token: string,
-): { msisdn: string; mode: "preview" | "production"; exp: number } | null {
+): { msisdn: string; mode: "preview" | "production"; exp: number; providerVerifiedUntil?: number } | null {
   const parts = token.split(".");
   if (parts.length !== 2) return null;
   const [body, sig] = parts;
@@ -154,8 +153,12 @@ function verifyToken(
       msisdn: string;
       mode: "preview" | "production";
       exp: number;
+      providerVerifiedUntil?: number;
     };
-    if (!parsed.msisdn || typeof parsed.exp !== "number" || Date.now() > parsed.exp) {
+    if (!parsed.msisdn || typeof parsed.exp !== "number" || Date.now() > parsed.exp ||
+        (parsed.providerVerifiedUntil !== undefined &&
+         (typeof parsed.providerVerifiedUntil !== "number" || !Number.isFinite(parsed.providerVerifiedUntil) ||
+          parsed.providerVerifiedUntil > parsed.exp))) {
       return null;
     }
     return parsed;
@@ -165,12 +168,12 @@ function verifyToken(
 }
 
 interface AuthedRequest extends Request {
-  subscriberSession?: { msisdn: string; mode: "preview" | "production"; exp: number };
+  subscriberSession?: { msisdn: string; mode: "preview" | "production"; exp: number; providerVerifiedUntil?: number };
 }
 
 function extractOptionalSession(
   req: Request,
-): { msisdn: string; mode: "preview" | "production"; exp: number } | null {
+): { msisdn: string; mode: "preview" | "production"; exp: number; providerVerifiedUntil?: number } | null {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
   return verifyToken(authHeader.slice(7).trim());
@@ -180,7 +183,7 @@ function requireSubscriberAuth(req: AuthedRequest, res: Response, next: NextFunc
   const decoded = extractOptionalSession(req);
   if (!decoded) {
     res.status(401).json({
-      error: "Authentication required or session expired. Please verify your mobile OTP.",
+      error: "Authentication required or session expired. Please log in to your RobiTrail account.",
     });
     return;
   }
@@ -189,6 +192,23 @@ function requireSubscriberAuth(req: AuthedRequest, res: Response, next: NextFunc
     return;
   }
   req.subscriberSession = decoded;
+  next();
+}
+
+// Phone-only sessions are NOT proof of subscriber ownership. Never allow
+// carrier billing or unsubscription without recent bdapps OTP verification.
+function requireVerifiedCarrierSubscriber(req: AuthedRequest, res: Response, next: NextFunction) {
+  if (getRuntimeSettings().mode !== "production") {
+    next();
+    return;
+  }
+  if (!req.subscriberSession?.providerVerifiedUntil ||
+      Date.now() >= req.subscriberSession.providerVerifiedUntil) {
+    res.status(403).json({
+      error: "This carrier operation requires subscriber ownership verified with bdapps OTP.",
+    });
+    return;
+  }
   next();
 }
 
@@ -239,10 +259,11 @@ app.get("/api/health", (_req, res) => {
     liveChargingBlockedReason: cfg.liveChargingBlockedReason,
     subscriptionEnabled: cfg.subscriptionEnabled,
     persistenceBackend: getPersistenceBackend(),
-    smsLoginConfigured:
+    smsLoginConfigured: false,
+    providerSubscriptionOtpConfigured:
       cfg.mode === "production" &&
-      process.env.ROBITRAIL_SMS_LOGIN_ENABLED === "true" &&
-      Boolean(getOtpHmacKey()) &&
+      cfg.subscriptionGateAllowed &&
+      cfg.phpGatewayConfigured &&
       isFirestorePersistenceConfigured(),
   });
 });
@@ -303,266 +324,208 @@ app.post("/api/bdapps/eligibility", async (req, res) => {
   });
 });
 
-// 2. OTP Request (strictly separated from paid subscription activation; routed via PHP gateway in production)
-app.post("/api/bdapps/otp/request", async (req, res) => {
-  const msisdn = normalizeMsisdn(req.body?.phoneNumber);
-  if (!msisdn) {
-    res.status(400).json({ error: "Invalid Bangladesh mobile number format." });
-    return;
-  }
-
-  const runtime = getRuntimeSettings();
-  const requestedIntent = req.body?.intent;
-  if (requestedIntent === "subscribe") {
-    res.status(403).json({
-      error:
-        "OTP verification is strictly separated from paid subscriptions. Registration OTP cannot trigger a subscription.",
-    });
-    return;
-  }
-  const intent: "login" | "register" = requestedIntent === "login" ? "login" : "register";
-  const referenceNo = `RT-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
-
-  if (runtime.mode === "production") {
-    const env = process.env as Record<string, string | undefined>;
-    if (
-      env.ROBITRAIL_SMS_LOGIN_ENABLED !== "true" ||
-      !isFirestorePersistenceConfigured() ||
-      !getOtpHmacKey()
-    ) {
-      res
-        .status(503)
-        .json({ error: "SMS login is not configured. No subscription or charge was initiated." });
-      return;
-    }
-    const code = String(crypto.randomInt(100000, 1000000));
-    const codeHash = crypto
-      .createHmac("sha256", getOtpHmacKey()!)
-      .update(`${referenceNo}:${code}`)
-      .digest("hex");
-    try {
-      const created = await fsCreateLoginOtp(referenceNo, msisdn, codeHash);
-      if (!created.allowed) {
-        res.status(429).json({
-          error: "Please wait before requesting another OTP.",
-          retryAfterSeconds: created.retryAfterSeconds,
-        });
-        return;
-      }
-      // This invokes ONLY /sms/send, never bdapps /otp/request or /otp/verify.
-      const sent = await sendSmsViaPhpGateway(
-        msisdn,
-        `RobiTrail login code: ${code}. Valid for 5 minutes. Do not share this code.`,
-      );
-      const accepted = sent.ok && sent.data?.statusCode === "S1000";
-      await fsMarkLoginOtpSent(referenceNo, accepted);
-
-      if (!accepted) {
-        const statusCode = String(sent.data?.statusCode || "SMS_UNAVAILABLE");
-
-        const upstreamHttpStatus = sent.httpStatus;
-
-        const providerDetail = String(sent.data?.statusDetail || sent.error || "");
-
-        console.error("[RobiTrail SMS OTP failure]", {
-          statusCode,
-          upstreamHttpStatus,
-          providerDetail,
-        });
-
-        res.status(503).json({
-          error: "SMS provider rejected the verification request.",
-          statusCode,
-          upstreamHttpStatus,
-          // Do not expose raw provider details to the browser.
-        });
-        return;
-      }
-
-      res.json({
-        mode: "production",
-        referenceNo,
-        maskedNumber: maskMsisdn(msisdn),
-        expiresInSeconds: 300,
-        notice: "SMS request accepted by provider. Delivery is not yet confirmed.",
-      });
-    } catch {
-      res.status(503).json({ error: "SMS login is temporarily unavailable." });
-    }
-    return;
-  }
-
-  const previewCode = String(crypto.randomInt(100000, 999999));
-  otpChallenges.set(referenceNo, {
-    referenceNo,
-    msisdn,
-    previewCode,
-    expiresAt: Date.now() + 5 * 60 * 1000,
-    attempts: 0,
+// 2. Free account registration remains direct phone login, with NO OTP.
+// Legacy custom login OTP routes are intentionally retired; they never generate a code.
+app.post("/api/bdapps/otp/request", (_req, res) => {
+  res.status(409).json({
+    error: "Phone-only signup is enabled. bdapps-issued OTP is available only with explicit subscription consent.",
   });
-
-  res.json({
-    mode: "preview",
-    referenceNo,
-    maskedNumber: maskMsisdn(msisdn),
-    expiresInSeconds: 300,
-    previewOnlyOtp: previewCode,
-    notice:
-      "Preview Mode Verification Code: No real SMS was sent via mobile carrier and zero balance was charged.",
+});
+app.post("/api/bdapps/otp/verify", (_req, res) => {
+  res.status(409).json({
+    error: "Legacy custom login OTP was retired. Use bdapps subscription OTP verification for a subscription.",
   });
 });
 
-// 3. OTP Verification (routed via PHP gateway in production; NEVER activates paid subscriptions)
-app.post("/api/bdapps/otp/verify", async (req, res) => {
-  const referenceNo = typeof req.body?.referenceNo === "string" ? req.body.referenceNo.trim() : "";
-  const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
-  if (!/^RT-[A-F0-9]{12}$/.test(referenceNo)) {
-    res.status(400).json({ error: "Invalid OTP reference." });
-    return;
-  }
-  const displayName =
-    typeof req.body?.displayName === "string"
-      ? req.body.displayName.trim().slice(0, 60)
-      : undefined;
-  const localTrailIds = sanitizeTrailIds(req.body?.localCompletedTrailIds);
-  const localCertificateIds =
-    getRuntimeSettings().mode === "production"
-      ? []
-      : Array.isArray(req.body?.localCertificateIds)
-        ? req.body.localCertificateIds.filter((id: unknown): id is string => typeof id === "string")
-        : [];
-  const preferredLang = req.body?.preferredLang === "bn" ? "bn" : "en";
-  const preferredCityId =
-    req.body?.preferredCityId === "dhaka" || req.body?.preferredCityId === "sylhet"
-      ? req.body.preferredCityId
-      : "chattogram";
+interface ProviderOtpChallenge {
+  scope: "subscription-provider-otp";
+  msisdn: string;
+  providerReferenceNo: string;
+  exp: number;
+}
 
+/** Signed challenge binds the bdapps reference to the CURRENT phone session. */
+function createProviderOtpChallenge(msisdn: string, providerReferenceNo: string): string {
+  const challenge: ProviderOtpChallenge = {
+    scope: "subscription-provider-otp",
+    msisdn,
+    providerReferenceNo,
+    exp: Date.now() + 5 * 60_000, // RobiTrail challenge lifetime, not claimed carrier OTP expiry.
+  };
+  const body = Buffer.from(JSON.stringify(challenge), "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", getSigningKey())
+    .update(`RobiTrail/subscription-provider-otp/v1:${body}`)
+    .digest("base64url");
+  return `${body}.${signature}`;
+}
+
+function verifyProviderOtpChallenge(token: unknown, sessionMsisdn: string): ProviderOtpChallenge | null {
+  if (typeof token !== "string" || token.length > 2000) return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [body, signature] = parts;
+  const expected = crypto.createHmac("sha256", getSigningKey())
+    .update(`RobiTrail/subscription-provider-otp/v1:${body}`)
+    .digest("base64url");
+  const a = Buffer.from(signature, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as ProviderOtpChallenge;
+    if (
+      parsed.scope !== "subscription-provider-otp" ||
+      parsed.msisdn !== sessionMsisdn ||
+      typeof parsed.providerReferenceNo !== "string" ||
+      parsed.providerReferenceNo.length < 1 || parsed.providerReferenceNo.length > 200 ||
+      typeof parsed.exp !== "number" || Date.now() > parsed.exp
+    ) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+// 3. Request real OTP FROM bdapps for subscription only. No OTP generated by RobiTrail.
+app.post("/api/bdapps/subscription/otp/request", requireSubscriberAuth, async (req: AuthedRequest, res) => {
   const runtime = getRuntimeSettings();
-  let productionMsisdn: string | undefined;
-  if (runtime.mode === "production") {
-    const env = process.env as Record<string, string | undefined>;
-    if (env.ROBITRAIL_SMS_LOGIN_ENABLED !== "true" || !getOtpHmacKey() || !/^\d{6}$/.test(otp)) {
-      res.status(400).json({ error: "Invalid OTP or SMS login is not configured." });
+  const gate = getLiveSubscriptionGateStatus();
+  if (runtime.mode !== "production" || !gate.allowed) {
+    res.status(503).json({ error: gate.reason || "Subscription OTP is not configured." });
+    return;
+  }
+  if (req.body?.consentAccepted !== true || req.body?.termsAccepted !== true) {
+    res.status(400).json({ error: "Explicit acceptance of the actual bdapps subscription terms is required." });
+    return;
+  }
+  const session = req.subscriberSession!;
+  if (req.body?.purpose === "token_purchase") {
+    const checkoutGate = tokenCheckoutGate();
+    if (!checkoutGate.allowed) {
+      res.status(503).json({ error: checkoutGate.reason || "Carrier checkout unavailable." });
       return;
     }
-    try {
-      const hash = crypto
-        .createHmac("sha256", getOtpHmacKey()!)
-        .update(`${referenceNo}:${otp}`)
-        .digest("hex");
-      const verified = await fsConsumeLoginOtp(referenceNo, hash);
-      if (!verified.ok || !verified.msisdn) {
-        res
-          .status(400)
-          .json({ error: "OTP invalid, expired, or already used. Please request a new code." });
-        return;
-      }
-      productionMsisdn = verified.msisdn;
-    } catch {
-      res.status(503).json({ error: "OTP verification service unavailable." });
+    if (normalizeMsisdn(req.body?.phoneNumber) !== session.msisdn) {
+      res.status(400).json({ error: "Payment phone number must match the signed-in account." });
       return;
     }
   }
-  const challenge =
-    runtime.mode === "production" && productionMsisdn
-      ? {
-          referenceNo,
-          msisdn: productionMsisdn,
-          previewCode: "",
-          expiresAt: Date.now() + 300_000,
-          attempts: 0,
-        }
-      : otpChallenges.get(referenceNo);
-  if (!challenge) {
-    res.status(400).json({ error: "OTP session not found or expired. Please request a new OTP." });
-    return;
-  }
-  if (Date.now() > challenge.expiresAt) {
-    otpChallenges.delete(referenceNo);
-    res.status(400).json({ error: "OTP expired (5 minute window elapsed). Request a new code." });
-    return;
-  }
-  if (challenge.attempts >= 5) {
-    otpChallenges.delete(referenceNo);
-    res
-      .status(429)
-      .json({ error: "Too many incorrect OTP attempts. Please request a fresh code." });
-    return;
-  }
-  challenge.attempts += 1;
-
-  if (runtime.mode === "production") {
-    // Already atomically verified and consumed in Firestore above.
-  } else {
-    if (!/^\d{6}$/.test(otp) || otp !== challenge.previewCode) {
-      const remaining = Math.max(0, 5 - challenge.attempts);
-      res.status(400).json({
-        error:
-          remaining > 0
-            ? `Incorrect preview OTP code. ${remaining} attempt(s) remaining.`
-            : "Too many incorrect OTP attempts. Request a new OTP code.",
+  // Reuse the EXISTING Firestore OTP-rate collection for durable request limits.
+  // PROVREF is just an internal reservation ID; this code creates no OTP.
+  const reservationId = `PROV-${crypto.randomBytes(8).toString("hex").toUpperCase()}`;
+  try {
+    const limit = await fsCreateLoginOtp(reservationId, session.msisdn, "PROVIDER_MANAGED_NO_OTP_HASH");
+    if (!limit.allowed) {
+      res.status(429).json({
+        error: "Please wait before requesting another provider OTP.",
+        retryAfterSeconds: limit.retryAfterSeconds,
       });
       return;
     }
-  }
-
-  otpChallenges.delete(referenceNo);
-
-  try {
-    const masked = maskMsisdn(challenge.msisdn);
-    const token = signToken({
-      msisdn: challenge.msisdn,
-      mode: runtime.mode,
-      exp: Date.now() + 24 * 60 * 60 * 1000,
-    });
-
-    const accountRecord = await saveOrUpdateAccount(challenge.msisdn, masked, {
-      displayName,
-      completedTrailIds: localTrailIds,
-      certificateIds: localCertificateIds,
-      preferredLang,
-      preferredCityId,
-      authMethod: "otp",
-      recordLogin: true,
-    });
-
-    const sub = await loadSubscription(challenge.msisdn);
-    const rewardResult = await grantWelcomeTokensIdempotent(
-      challenge.msisdn,
-      accountRecord.accountId,
-    );
-    const persistenceBackend = getPersistenceBackend();
-    const smsPreview = rewardResult.grantedNow
-      ? await dispatchBdappsSmsNotification(challenge.msisdn, masked, "welcome_tokens_reward", {
-          tokens: 10,
-          balanceAfter: rewardResult.wallet.balance,
-        })
-      : await dispatchBdappsSmsNotification(challenge.msisdn, masked, "registration_confirmation");
-
+    const sent = await requestOtpViaPhpGateway(session.msisdn);
+    const providerReference = String(sent.data?.referenceNo || "").trim();
+    const accepted = sent.ok && sent.data?.statusCode === "S1000" && providerReference.length > 0;
+    await fsMarkLoginOtpSent(reservationId, accepted);
+    if (!accepted) {
+      console.error("[RobiTrail bdapps provider OTP request rejected]", {
+        statusCode: sent.data?.statusCode || "UNKNOWN",
+        httpStatus: sent.httpStatus,
+        // The PHP gateway records sanitized provider detail; do not log OTP/reference/phone.
+      });
+      res.status(sent.httpStatus === 503 ? 503 : 502).json({
+        error: "bdapps did not accept the subscription OTP request.",
+        statusCode: sent.data?.statusCode || "UNKNOWN",
+      });
+      return;
+    }
     res.json({
-      verified: true,
-      authMethod: "otp",
+      ok: true,
+      provider: "bdapps",
+      referenceNo: createProviderOtpChallenge(session.msisdn, providerReference),
+      maskedNumber: maskMsisdn(session.msisdn),
+      expiresInSeconds: 300,
+      notice: "bdapps accepted the OTP request. SMS delivery is not guaranteed.",
+    });
+  } catch {
+    res.status(503).json({ error: "Provider OTP request could not be completed." });
+  }
+});
+
+// 3B. bdapps verifies the OTP, and the provider's status confirms subscription.
+app.post("/api/bdapps/subscription/otp/verify", requireSubscriberAuth, async (req: AuthedRequest, res) => {
+  const runtime = getRuntimeSettings();
+  const gate = getLiveSubscriptionGateStatus();
+  if (runtime.mode !== "production" || !gate.allowed) {
+    res.status(503).json({ error: gate.reason || "Subscription OTP is not configured." });
+    return;
+  }
+  if (req.body?.consentAccepted !== true) {
+    res.status(400).json({ error: "Subscription consent must remain confirmed during OTP verification." });
+    return;
+  }
+  const session = req.subscriberSession!;
+  if (req.body?.purpose === "token_purchase") {
+    const checkoutGate = tokenCheckoutGate();
+    if (!checkoutGate.allowed) {
+      res.status(503).json({ error: checkoutGate.reason || "Carrier checkout unavailable." });
+      return;
+    }
+  }
+  const challenge = verifyProviderOtpChallenge(req.body?.referenceNo, session.msisdn);
+  const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
+  if (!challenge || !/^\d{4,8}$/.test(otp)) {
+    res.status(400).json({ error: "Invalid or expired provider OTP reference/code." });
+    return;
+  }
+  try {
+    const result = await verifyOtpViaPhpGateway(session.msisdn, challenge.providerReferenceNo, otp);
+    if (!result.ok || result.data?.verified !== true) {
+      res.status(400).json({
+        verified: false,
+        error: "bdapps declined OTP verification.",
+        statusCode: result.data?.statusCode || "UNKNOWN",
+      });
+      return;
+    }
+    const status = await getSubscriptionStatusViaPhpGateway(session.msisdn);
+    const confirmed = status.ok && normalizeBdappsSubscriptionStatus(status.data?.subscriptionStatus) === "REGISTERED";
+    // Never mark a subscription active from OTP transport success alone.
+    if (confirmed) {
+      const now = new Date().toISOString();
+      const disclosure = buildSubscriptionDisclosure(runtime.mode, runtime.shortCode);
+      await persistSubscription({
+        msisdn: session.msisdn,
+        status: "active_production",
+        mode: runtime.mode,
+        planName: disclosure.planName,
+        priceLabel: disclosure.priceLabel,
+        billingFrequency: disclosure.billingFrequency,
+        renewalTerms: disclosure.renewalTerms,
+        cancellationMethod: disclosure.cancellationMethod,
+        consentTimestamp: now,
+        nextRenewalAt: null,
+        entitlementActive: true,
+        subscriberId: maskMsisdn(session.msisdn),
+        updatedAt: now,
+      });
+    }
+    const now = Date.now();
+    const upgradedToken = signToken({
+      msisdn: session.msisdn,
       mode: runtime.mode,
-      persistenceBackend,
-      persistedToFirestore: persistenceBackend === "firestore",
-      token,
-      maskedNumber: masked,
-      accountActivated: true,
-      account: await toPublicAccount(accountRecord),
-      subscription: formatPublicSubscription(
-        challenge.msisdn,
-        sub,
-        runtime.mode,
-        runtime.shortCode,
-      ),
-      wallet: rewardResult.wallet,
-      welcomeGrantedNow: rewardResult.grantedNow,
-      smsPreview,
+      exp: now + 24 * 60 * 60_000,
+      providerVerifiedUntil: now + 24 * 60 * 60_000,
     });
-  } catch (err) {
-    res.status(503).json({
-      error: err instanceof Error ? err.message : "Persistence error while creating account.",
+    res.status(confirmed ? 200 : 202).json({
+      verified: true,
+      token: upgradedToken, // Client must replace its bearer token before any sensitive carrier action.
+      subscriptionActive: confirmed,
+      subscriptionStatus: confirmed ? "REGISTERED" : "PENDING",
+      notice: confirmed
+        ? "bdapps verified OTP and confirmed subscription."
+        : "bdapps verified OTP, but subscription status is not yet confirmed.",
     });
+  } catch {
+    res.status(503).json({ error: "Provider OTP verification could not be completed." });
   }
 });
 
@@ -581,6 +544,13 @@ app.post("/api/bdapps/subscribe", requireSubscriberAuth, async (req: AuthedReque
   if (!consentAccepted) {
     res.status(400).json({
       error: "Explicit consent is required before initiating subscription activation.",
+    });
+    return;
+  }
+
+  if (["production"].includes(runtime.mode)) {
+    res.status(409).json({
+      error: "Complete the bdapps subscription OTP request/verify journey before activating a subscription.",
     });
     return;
   }
@@ -677,7 +647,7 @@ app.get("/api/bdapps/status", requireSubscriberAuth, async (req: AuthedRequest, 
 });
 
 // 6. Unsubscribe / Cancellation (routed via PHP gateway in production)
-app.post("/api/bdapps/unsubscribe", requireSubscriberAuth, async (req: AuthedRequest, res) => {
+app.post("/api/bdapps/unsubscribe", requireSubscriberAuth, requireVerifiedCarrierSubscriber, async (req: AuthedRequest, res) => {
   const session = req.subscriberSession!;
   const runtime = getRuntimeSettings();
   const masked = maskMsisdn(session.msisdn);
@@ -948,15 +918,15 @@ app.post("/api/account/robi-direct", async (req, res) => {
 // 7B. RobiTrail Token Wallet, Game Unlock, Mistake Penalty & Token Shop Routes
 app.get("/api/tokens/packages", (_req, res) => {
   const runtime = getRuntimeSettings();
-  const subGate = getLiveSubscriptionGateStatus();
+  const gate = tokenCheckoutGate();
   res.json({
     mode: runtime.mode === "production" ? "live_bdapps" : "demo",
-    billingChannel: "subscription",
-    liveChargingEnabled: runtime.liveChargingEnabled,
+    billingChannel: "caas",
     subscriptionEnabled: runtime.subscriptionEnabled,
+    subscriptionTermsText: (process.env.ROBITRAIL_SUBSCRIPTION_TERMS_TEXT || "").trim(),
     phpGatewayConfigured: runtime.phpGatewayConfigured,
-    gatewayReady: subGate.allowed,
-    gatewayBlockedReason: subGate.reason,
+    gatewayReady: gate.allowed,
+    gatewayBlockedReason: gate.reason,
     packages: TOKEN_SHOP_PACKAGES,
   });
 });
@@ -1127,341 +1097,104 @@ app.post("/api/tokens/mistake", requireSubscriberAuth, async (req: AuthedRequest
   }
 });
 
-app.post("/api/tokens/shop/purchase", requireSubscriberAuth, async (req: AuthedRequest, res) => {
+// Real one-time token payment via bdapps CaaS; provider-verified OTP required.
+// The OTP endpoint is separate and may activate a bdapps subscription.
+app.post("/api/tokens/shop/purchase", requireSubscriberAuth, requireVerifiedCarrierSubscriber, async (req: AuthedRequest, res) => {
   const session = req.subscriberSession!;
-  const runtime = getRuntimeSettings();
-
-  let account;
-  try {
-    account = await loadAccount(session.msisdn);
-  } catch (err) {
-    res.status(503).json({
-      ok: false,
-      error: err instanceof Error ? err.message : "Persistence error loading account.",
-    });
+  const gate = tokenCheckoutGate();
+  if (!gate.allowed) {
+    res.status(503).json({ ok: false, blocked: true, billingChannel: "caas",
+      error: gate.reason || "Live bdapps CaaS checkout is not approved." });
     return;
   }
-
-  if (!account) {
-    res.status(404).json({ ok: false, error: "Account must be verified before buying tokens." });
+  if (req.body?.consentAccepted !== true || req.body?.userConfirmed !== true) {
+    res.status(400).json({ ok: false, error: "Explicit confirmation of the one-time charge is required." });
     return;
   }
-
   const packageId = typeof req.body?.packageId === "string" ? req.body.packageId.trim() : "";
   const pkg = getTokenPackageById(packageId);
-  if (!pkg) {
-    res.status(400).json({ ok: false, error: "Unknown token package selected." });
+  if (!pkg) { res.status(400).json({ ok: false, error: "Invalid package." }); return; }
+  const key = typeof req.body?.idempotencyKey === "string" ? req.body.idempotencyKey : "";
+  if (!/^[A-Za-z0-9:_-]{8,100}$/.test(key)) {
+    res.status(400).json({ ok: false, error: "Valid idempotencyKey required." });
     return;
   }
-
-  if (req.body?.userConfirmed !== true && req.body?.consentAccepted !== true) {
-    res.status(400).json({
-      ok: false,
-      error: "Explicit user consent is required before initiating bdapps Subscription billing.",
-    });
-    return;
-  }
-
-  // Strictly require live Subscription API + PHP gateway + production persistence (never simulate)
-  const gate = getLiveSubscriptionGateStatus();
-  if (!gate.allowed) {
-    res.status(503).json({
-      ok: false,
-      blocked: true,
-      billingChannel: "subscription",
-      error: gate.reason || "Live bdapps Subscription API is not configured.",
-      mode: "live_bdapps",
-    });
-    return;
-  }
-
-  const clientIdempotencyKey =
-    typeof req.body?.idempotencyKey === "string" &&
-    /^[A-Za-z0-9:_-]{8,100}$/.test(req.body.idempotencyKey)
-      ? req.body.idempotencyKey
-      : crypto.randomBytes(16).toString("hex");
-  const idempotencyKey = `RT-${crypto.createHmac("sha256", getSigningKey()).update(`${session.msisdn}:${pkg.packageId}:${clientIdempotencyKey}`).digest("hex").slice(0, 40)}`;
-
+  const externalTrxId = `RT-${crypto.createHmac("sha256", getSigningKey())
+    .update(`${session.msisdn}:${pkg.packageId}:${key}`).digest("hex").slice(0, 40)}`;
   try {
-    // 1. Atomically persist a PENDING subscription token order before hitting PHP gateway
+    const account = await loadAccount(session.msisdn);
+    if (!account) { res.status(404).json({ ok: false, error: "Account not found." }); return; }
     const pending = await createLivePendingPurchase(session.msisdn, account.accountId, {
-      externalTrxId: idempotencyKey,
-      packageId: pkg.packageId,
-      tokens: pkg.tokens,
-      priceBdt: pkg.priceBdt,
-      billingChannel: "subscription",
+      externalTrxId, packageId: pkg.packageId, tokens: pkg.tokens,
+      priceBdt: pkg.priceBdt, billingChannel: "caas",
     });
-
     if (pending.duplicate) {
-      const existingWallet = pending.wallet;
-      const existingStatus = pending.purchase.status;
-      res
-        .status(existingStatus === "failed" ? 402 : existingStatus === "pending" ? 202 : 200)
-        .json({
-          ok: existingStatus !== "failed",
-          duplicate: true,
-          pendingConfirmation: existingStatus === "pending",
-          status: existingStatus,
-          externalTrxId: pending.purchase.externalTrxId,
-          wallet: existingWallet,
-          mode: "live_bdapps",
-          billingChannel: "subscription",
-          notice:
-            existingStatus === "confirmed"
-              ? "Duplicate purchase request ignored; pack tokens were already credited once."
-              : existingStatus === "pending"
-                ? "Subscription purchase is already pending verified bdapps confirmation."
-                : "Subscription purchase failed previously; no tokens were credited.",
-        });
-      return;
-    }
-
-    // 2. Call PHP bdapps Subscription gateway and check confirmation status
-    const subCharge = await executeBdappsSubscriptionPurchase(session.msisdn, pkg, idempotencyKey, {
-      userConfirmed: true,
-    });
-
-    if (subCharge.txState === "failed") {
-      const failedSettlement = await settleLivePurchase(idempotencyKey, "failed", {
-        providerStatusCode: subCharge.statusCode || "FAILED",
-        providerStatusDetail: subCharge.notice,
-      });
-      const httpStatus =
-        subCharge.httpStatus >= 500 ? subCharge.httpStatus : subCharge.blocked ? 503 : 402;
-      res.status(httpStatus).json({
-        ok: false,
-        blocked: Boolean(subCharge.blocked),
-        duplicate: false,
-        status: "failed",
-        externalTrxId: idempotencyKey,
-        error: subCharge.notice,
-        wallet: failedSettlement.wallet || pending.wallet,
-        transaction: failedSettlement.transaction,
-        mode: "live_bdapps",
-        billingChannel: "subscription",
+      const state = pending.purchase.status;
+      res.status(state === "pending" ? 202 : state === "failed" ? 402 : 200).json({
+        ok: state !== "failed", duplicate: true, status: state,
+        pendingConfirmation: state === "pending", externalTrxId,
+        wallet: pending.wallet, billingChannel: "caas", mode: "live_bdapps",
+        notice: "Existing transaction returned. No second carrier charge was requested.",
       });
       return;
     }
-
-    const now = new Date().toISOString();
-    const disclosure = buildSubscriptionDisclosure(runtime.mode, runtime.shortCode);
-
-    if (subCharge.txState === "confirmed") {
-      await persistSubscription({
-        msisdn: session.msisdn,
-        status: "active_production",
-        mode: "production",
-        planName: disclosure.planName,
-        priceLabel: `BDT ${pkg.priceBdt} (${pkg.tokens} Tokens)`,
-        billingFrequency: disclosure.billingFrequency,
-        renewalTerms: disclosure.renewalTerms,
-        cancellationMethod: disclosure.cancellationMethod,
-        consentTimestamp: now,
-        nextRenewalAt: null,
-        entitlementActive: true,
-        subscriberId: maskMsisdn(session.msisdn),
-        updatedAt: now,
+    const charged = await chargeCaasViaPhpGateway({
+      msisdn: session.msisdn, packageId: pkg.packageId, tokens: pkg.tokens,
+      priceBdt: pkg.priceBdt, externalTrxId, userConfirmed: true,
+    });
+    const code = String(charged.data?.statusCode || "UNKNOWN");
+    // Ambiguous provider/network errors must remain PENDING: avoid retrying a possible debit.
+    if (charged.data?.txState === "failed" && charged.httpStatus < 500 &&
+        charged.data?.blocked !== true && !charged.error) {
+      const failed = await settleLivePurchase(externalTrxId, "failed", {
+        providerStatusCode: code,
+        providerStatusDetail: "Provider explicitly rejected direct debit.",
       });
-
-      const settled = await settleLivePurchase(idempotencyKey, "confirmed", {
-        providerStatusCode: subCharge.statusCode || "S1000",
-        providerStatusDetail: subCharge.notice,
-      });
-
-      const smsPreview = settled.wallet
-        ? await dispatchBdappsSmsNotification(
-            session.msisdn,
-            maskMsisdn(session.msisdn),
-            "token_purchase_confirmation",
-            {
-              tokens: pkg.tokens,
-              priceBdt: pkg.priceBdt,
-              balanceAfter: settled.wallet.balance,
-            },
-          )
-        : null;
-
-      res.json({
-        ok: true,
-        duplicate: settled.alreadySettled,
-        pendingConfirmation: false,
-        status: "confirmed",
-        externalTrxId: idempotencyKey,
-        wallet: settled.wallet || pending.wallet,
-        transaction: settled.transaction,
-        smsPreview,
-        notice: subCharge.notice,
-        mode: "live_bdapps",
-        billingChannel: "subscription",
-      });
+      res.status(402).json({ ok: false, status: "failed", pendingConfirmation: false,
+        error: "Carrier rejected the charge; no tokens credited.", externalTrxId,
+        wallet: failed.wallet || pending.wallet, billingChannel: "caas", mode: "live_bdapps" });
       return;
     }
-
-    // 3. Pending Confirmation: persist consent record, credit ZERO tokens until confirmed
-    await persistSubscription({
-      msisdn: session.msisdn,
-      status: "inactive",
-      mode: "production",
-      planName: disclosure.planName,
-      priceLabel: `BDT ${pkg.priceBdt} (${pkg.tokens} Tokens)`,
-      billingFrequency: disclosure.billingFrequency,
-      renewalTerms: disclosure.renewalTerms,
-      cancellationMethod: disclosure.cancellationMethod,
-      consentTimestamp: now,
-      nextRenewalAt: null,
-      entitlementActive: false,
-      subscriberId: maskMsisdn(session.msisdn),
-      updatedAt: now,
-    });
-
-    res.status(202).json({
-      ok: true,
-      duplicate: false,
-      pendingConfirmation: true,
-      status: "pending",
-      externalTrxId: idempotencyKey,
-      wallet: pending.wallet,
-      transaction: null,
-      notice: subCharge.notice,
-      mode: "live_bdapps",
-      billingChannel: "subscription",
-    });
+    // Even HTTP 200 is not treated as a successful debit until a validated payment callback
+    // settles this specific Firestore order. Never issue another debit with a different key.
+    res.status(202).json({ ok: true, status: "pending", pendingConfirmation: true,
+      externalTrxId, wallet: pending.wallet, billingChannel: "caas", mode: "live_bdapps",
+      notice: charged.data?.txState === "pending"
+        ? "CaaS request accepted; awaiting verified charge confirmation. No tokens credited yet."
+        : "Carrier response uncertain; do not retry payment. Check this order status or contact support." });
   } catch (err) {
-    res.status(503).json({
-      ok: false,
-      error: err instanceof Error ? err.message : "Live Subscription persistence failure.",
-      mode: "live_bdapps",
-    });
+    // Preserve existing pending order when outcome is unknown.
+    console.error("[RobiTrail CaaS purchase error]", { message: err instanceof Error ? err.message : "Unknown" });
+    res.status(503).json({ ok: false, pendingConfirmation: true,
+      externalTrxId, error: "Checkout status uncertain. Do not initiate another payment; check transaction status." });
   }
 });
 
+// CaaS settlement is confirmed only via verified provider charging callback,
+// NEVER from subscription REGISTERED status.
 app.get("/api/tokens/shop/status", requireSubscriberAuth, async (req: AuthedRequest, res) => {
   const session = req.subscriberSession!;
-  const gate = getLiveSubscriptionGateStatus();
-  if (!gate.allowed) {
-    res.status(503).json({
-      ok: false,
-      blocked: true,
-      error: gate.reason || "Live bdapps Subscription API is not configured.",
-      mode: "live_bdapps",
-    });
-    return;
-  }
-
-  const externalTrxId =
-    typeof req.query?.externalTrxId === "string" ? req.query.externalTrxId.trim() : "";
+  const externalTrxId = typeof req.query?.externalTrxId === "string" ? req.query.externalTrxId.trim() : "";
   if (!externalTrxId) {
-    res.status(400).json({ ok: false, error: "externalTrxId query parameter is required." });
-    return;
+    res.status(400).json({ error: "externalTrxId is required." }); return;
   }
-
   try {
-    const orderResult = await getLivePurchaseOrder(externalTrxId);
-    if (!orderResult.purchase || orderResult.purchase.msisdn !== session.msisdn) {
-      res.status(404).json({ ok: false, error: "Token purchase order not found." });
-      return;
+    const result = await getLivePurchaseOrder(externalTrxId);
+    const order = result.purchase;
+    if (!order || order.msisdn !== session.msisdn || order.billingChannel !== "caas") {
+      res.status(404).json({ error: "CaaS purchase order not found." }); return;
     }
-
-    const order = orderResult.purchase;
-    if (order.status === "pending") {
-      const statusCheck = await getSubscriptionStatusViaPhpGateway(session.msisdn);
-      const subStatus = statusCheck.ok
-        ? normalizeBdappsSubscriptionStatus(statusCheck.data?.subscriptionStatus)
-        : "";
-      if (subStatus === "REGISTERED") {
-        const now = new Date().toISOString();
-        const disclosure = buildSubscriptionDisclosure(
-          "production",
-          getRuntimeSettings().shortCode,
-        );
-        await persistSubscription({
-          msisdn: session.msisdn,
-          status: "active_production",
-          mode: "production",
-          planName: disclosure.planName,
-          priceLabel: `BDT ${order.priceBdt} (${order.tokens} Tokens)`,
-          billingFrequency: disclosure.billingFrequency,
-          renewalTerms: disclosure.renewalTerms,
-          cancellationMethod: disclosure.cancellationMethod,
-          consentTimestamp: now,
-          nextRenewalAt: null,
-          entitlementActive: true,
-          subscriberId: maskMsisdn(session.msisdn),
-          updatedAt: now,
-        });
-        const settled = await settleLivePurchase(externalTrxId, "confirmed", {
-          providerStatusCode: "S1000",
-          providerStatusDetail: "Confirmed via bdapps subscription status check.",
-        });
-        const smsPreview = settled.wallet
-          ? await dispatchBdappsSmsNotification(
-              session.msisdn,
-              maskMsisdn(session.msisdn),
-              "token_purchase_confirmation",
-              {
-                tokens: order.tokens,
-                priceBdt: order.priceBdt,
-                balanceAfter: settled.wallet.balance,
-              },
-            )
-          : null;
-        res.json({
-          ok: true,
-          pendingConfirmation: false,
-          status: "confirmed",
-          externalTrxId,
-          wallet: settled.wallet,
-          transaction: settled.transaction,
-          smsPreview,
-          notice: `bdapps subscription confirmed; +${order.tokens} tokens credited to your wallet.`,
-          mode: "live_bdapps",
-        });
-        return;
-      }
-
-      res.status(202).json({
-        ok: true,
-        pendingConfirmation: true,
-        status: "pending",
-        externalTrxId,
-        wallet: orderResult.wallet,
-        transaction: null,
-        notice:
-          "Subscription confirmation is still pending from bdapps. Please check again shortly.",
-        mode: "live_bdapps",
-      });
-      return;
-    }
-
-    if (order.status === "failed") {
-      res.status(402).json({
-        ok: false,
-        pendingConfirmation: false,
-        status: "failed",
-        externalTrxId,
-        error: order.providerStatusDetail || "Subscription purchase failed.",
-        wallet: orderResult.wallet,
-        transaction: orderResult.transaction,
-        mode: "live_bdapps",
-      });
-      return;
-    }
-
-    res.json({
-      ok: true,
-      pendingConfirmation: false,
-      status: "confirmed",
-      externalTrxId,
-      wallet: orderResult.wallet,
-      transaction: orderResult.transaction,
-      notice: `bdapps subscription confirmed; +${order.tokens} tokens credited to your wallet.`,
-      mode: "live_bdapps",
+    res.status(order.status === "pending" ? 202 : order.status === "failed" ? 402 : 200).json({
+      ok: order.status !== "failed", status: order.status,
+      pendingConfirmation: order.status === "pending", externalTrxId,
+      wallet: result.wallet, transaction: result.transaction,
+      billingChannel: "caas", mode: "live_bdapps",
+      notice: order.status === "confirmed" ? "Carrier confirmed payment; tokens credited once."
+        : order.status === "pending" ? "Awaiting verified bdapps charging notification. Do not pay again."
+        : "Carrier payment failed; no tokens credited.",
     });
-  } catch (err) {
-    res.status(503).json({
-      ok: false,
-      error: err instanceof Error ? err.message : "Unable to check subscription purchase status.",
-    });
+  } catch {
+    res.status(503).json({ error: "Unable to load charging status. Do not retry the debit." });
   }
 });
 
