@@ -393,19 +393,21 @@ app.post("/api/bdapps/subscription/otp/request", requireSubscriberAuth, async (r
     res.status(503).json({ error: gate.reason || "Subscription OTP is not configured." });
     return;
   }
-  if (req.body?.consentAccepted !== true || req.body?.termsAccepted !== true) {
-    res.status(400).json({ error: "Explicit acceptance of the actual bdapps subscription terms is required." });
+  // Requesting an OTP can be separated from unapproved one-time CaaS debit.
+  // Without approved terms we permit only the OTP delivery stage, NEVER verification/charging.
+  const deliveryOnly = req.body?.purpose === "token_purchase" && req.body?.deliveryOnly === true;
+  if (req.body?.consentAccepted !== true || (!deliveryOnly && req.body?.termsAccepted !== true)) {
+    res.status(400).json({ error: "Explicit consent is required for a bdapps subscription OTP request." });
     return;
   }
   const session = req.subscriberSession!;
   if (req.body?.purpose === "token_purchase") {
-    const checkoutGate = tokenCheckoutGate();
-    if (!checkoutGate.allowed) {
-      res.status(503).json({ error: checkoutGate.reason || "Carrier checkout unavailable." });
+    if (!deliveryOnly) {
+      res.status(400).json({ error: "Unapproved token checkout can only request an OTP, not verify or charge." });
       return;
     }
     if (normalizeMsisdn(req.body?.phoneNumber) !== session.msisdn) {
-      res.status(400).json({ error: "Payment phone number must match the signed-in account." });
+      res.status(400).json({ error: "OTP phone number must match the signed-in account." });
       return;
     }
   }
@@ -443,7 +445,9 @@ app.post("/api/bdapps/subscription/otp/request", requireSubscriberAuth, async (r
       referenceNo: createProviderOtpChallenge(session.msisdn, providerReference),
       maskedNumber: maskMsisdn(session.msisdn),
       expiresInSeconds: 300,
-      notice: "bdapps accepted the OTP request. SMS delivery is not guaranteed.",
+      notice: deliveryOnly
+        ? "bdapps accepted the subscription OTP request. Verification and payment are unavailable until approved terms and billing permissions are configured. SMS delivery is not guaranteed."
+        : "bdapps accepted the OTP request. SMS delivery is not guaranteed.",
     });
   } catch {
     res.status(503).json({ error: "Provider OTP request could not be completed." });
@@ -919,6 +923,7 @@ app.post("/api/account/robi-direct", async (req, res) => {
 app.get("/api/tokens/packages", (_req, res) => {
   const runtime = getRuntimeSettings();
   const gate = tokenCheckoutGate();
+  const otpGate = getLiveSubscriptionGateStatus();
   res.json({
     mode: runtime.mode === "production" ? "live_bdapps" : "demo",
     billingChannel: "caas",
@@ -927,6 +932,8 @@ app.get("/api/tokens/packages", (_req, res) => {
     phpGatewayConfigured: runtime.phpGatewayConfigured,
     gatewayReady: gate.allowed,
     gatewayBlockedReason: gate.reason,
+    otpRequestReady: runtime.mode === "production" && otpGate.allowed,
+    otpBlockedReason: otpGate.reason,
     packages: TOKEN_SHOP_PACKAGES,
   });
 });
