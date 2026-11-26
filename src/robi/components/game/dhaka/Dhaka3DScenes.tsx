@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useRobiTrail } from "../../../context/RobiTrailContext";
 import {
@@ -7,7 +7,28 @@ import {
   type InteractiveStation,
   type ObstacleBox,
 } from "../chattogram3d/ThreeMissionHarness";
-import { CheckCircle2, Smartphone, Radio, Server, Wifi, AlertTriangle } from "lucide-react";
+import {
+  CheckCircle2,
+  Smartphone,
+  Radio,
+  Server,
+  Wifi,
+  AlertTriangle,
+  Tv,
+  Gauge,
+  Database,
+  ShieldCheck,
+} from "lucide-react";
+import {
+  createInitialDataDetectiveState,
+  DATA_BUDGET_CAP_MB,
+  evaluateDataDetective,
+  getVideoDailyMb,
+  STUDY_SPEED_GOAL_MBPS,
+  type DataDetectiveState,
+  type DataDetectiveStationId,
+} from "./dataDetectiveLogic";
+import { buildDhakaApartmentScene, type ApartmentRigHandles } from "./dhakaApartmentProps";
 
 interface DhakaSceneProps {
   paused?: boolean;
@@ -17,8 +38,10 @@ interface DhakaSceneProps {
   onMistake?: (actionKey: string) => void;
 }
 
+const _pulseLerpPos = new THREE.Vector3();
+
 /* =========================================================================
-   DHAKA TRAIL 1: DATA DETECTIVE (3D Study Room Hardware Inspection)
+   DHAKA TRAIL 1: DATA DETECTIVE (3D Dhaka Apartment Network & Speed Audit)
    ========================================================================= */
 export const DhakaGame1DataDetective3D: React.FC<DhakaSceneProps> = ({
   paused,
@@ -27,332 +50,475 @@ export const DhakaGame1DataDetective3D: React.FC<DhakaSceneProps> = ({
   onComplete,
 }) => {
   const { lang } = useRobiTrail();
-  const [activeStation, setActiveStation] = useState<"phone" | "monitor" | "router" | null>(null);
-  const [videoRes, setVideoRes] = useState<"1080p" | "480p" | "360p">("1080p");
-  const [autoPlay, setAutoPlay] = useState(true);
-  const [cloudSync, setCloudSync] = useState(true);
-  const [bgUpdates, setBgUpdates] = useState(true);
+  const [activeStation, setActiveStation] = useState<DataDetectiveStationId | null>(null);
+  const [auditState, setAuditState] = useState<DataDetectiveState>(createInitialDataDetectiveState);
+  const [verifyNotice, setVerifyNotice] = useState<string | null>(null);
   const [solved, setSolved] = useState(false);
 
-  const stationsRef = useRef<InteractiveStation[]>([]);
-  const packetCubesRef = useRef<THREE.Mesh[]>([]);
+  const rigRef = useRef<ApartmentRigHandles | null>(null);
+  const metricsRef = useRef(evaluateDataDetective(auditState));
+  const pausedRef = useRef(Boolean(paused));
+  pausedRef.current = Boolean(paused);
+
   const onProgressRef = useRef(onProgress);
   const onCompleteRef = useRef(onComplete);
   onProgressRef.current = onProgress;
   onCompleteRef.current = onComplete;
 
-  const videoMb = videoRes === "1080p" ? 320 : videoRes === "480p" ? 180 : 110;
-  const totalMb =
-    videoMb + (autoPlay ? 210 : 0) + (cloudSync ? 140 : 0) + (bgUpdates ? 110 : 0) + 70;
-  const underBudget = totalMb <= 400;
+  const metrics = useMemo(() => evaluateDataDetective(auditState), [auditState]);
+  metricsRef.current = metrics;
+
+  const handleOpenStation = useCallback((stationId: string) => {
+    const id = stationId as DataDetectiveStationId;
+    setActiveStation(id);
+    setVerifyNotice(null);
+    setAuditState((prev) =>
+      prev.auditedStations.includes(id)
+        ? prev
+        : { ...prev, auditedStations: [...prev.auditedStations, id] },
+    );
+  }, []);
 
   useEffect(() => {
-    const pct = underBudget ? 90 : Math.max(15, Math.round((400 / totalMb) * 85));
-    if (!solved) onProgressRef.current(pct);
+    if (!solved) onProgressRef.current(metrics.progressPercent);
 
-    // Update 3D station glows and floating packet cube color
-    const phoneOk = videoRes !== "1080p";
-    const monitorOk = !autoPlay;
-    const routerOk = !cloudSync && !bgUpdates;
+    const rig = rigRef.current;
+    if (!rig) return;
 
-    stationsRef.current.forEach((st) => {
-      if (st.id === "phone")
-        st.state = phoneOk ? "completed" : hintLevel >= 2 ? "highlighted" : "idle";
-      if (st.id === "monitor")
-        st.state = monitorOk ? "completed" : hintLevel >= 2 ? "highlighted" : "idle";
-      if (st.id === "router")
-        st.state = routerOk ? "completed" : hintLevel >= 2 ? "highlighted" : "idle";
+    const auditedSet = new Set(auditState.auditedStations);
+    rig.stations.forEach((st) => {
+      const id = st.id as DataDetectiveStationId;
+      if (metrics.stationReady[id]) {
+        st.state = "completed";
+      } else if (activeStation === id) {
+        st.state = "operating";
+      } else if (auditedSet.has(id)) {
+        st.state = "selected";
+      } else if (hintLevel >= 2) {
+        st.state = "highlighted";
+      } else {
+        st.state = "idle";
+      }
     });
 
-    packetCubesRef.current.forEach((cube, i) => {
+    const activeCount = Math.max(1, Math.ceil((metrics.totalMb / 1440) * rig.packetCubes.length));
+    rig.packetCubes.forEach((cube, i) => {
       const mat = cube.material as THREE.MeshStandardMaterial;
-      const activeCount = Math.ceil((totalMb / 850) * packetCubesRef.current.length);
       cube.visible = i < activeCount;
-      mat.color.set(underBudget ? "#22c55e" : "#f43f5e");
-      mat.emissive.set(underBudget ? "#16a34a" : "#e11d48");
+      const colorHex = metrics.underDataCap
+        ? 0x10b981
+        : metrics.totalMb <= 650
+          ? 0xf59e0b
+          : 0xf43f5e;
+      mat.color.setHex(colorHex);
+      mat.emissive.setHex(colorHex);
     });
-  }, [totalMb, underBudget, videoRes, autoPlay, cloudSync, bgUpdates, hintLevel, solved]);
+
+    const routerClean =
+      auditState.wifiBand === "5ghz" && !auditState.cloudSync && !auditState.bgUpdates;
+    rig.routerLedMat.color.setHex(
+      routerClean ? 0x10b981 : auditState.wifiBand === "5ghz" ? 0xf59e0b : 0xf43f5e,
+    );
+    rig.routerLedMat.emissive.setHex(
+      routerClean ? 0x10b981 : auditState.wifiBand === "5ghz" ? 0xf59e0b : 0xf43f5e,
+    );
+
+    const tvClean = auditState.tvSource === "fiber";
+    rig.tvHotspotLedMat.color.setHex(tvClean ? 0x10b981 : 0xf43f5e);
+    rig.tvHotspotLedMat.emissive.setHex(tvClean ? 0x10b981 : 0xf43f5e);
+
+    rig.fiberPulses.forEach((p) => {
+      const mat = p.mesh.material as THREE.MeshStandardMaterial;
+      const hex = metrics.meetsSpeedTarget ? 0x10b981 : 0xf59e0b;
+      mat.color.setHex(hex);
+      mat.emissive.setHex(hex);
+    });
+  }, [auditState, metrics, activeStation, hintLevel, solved]);
 
   const handleSceneReady = useCallback((api: HarnessApi) => {
-    const { scene } = api;
+    const rig = buildDhakaApartmentScene(api.scene);
+    rigRef.current = rig;
+    api.registerObstacles(rig.obstacles);
+    api.registerStations(rig.stations);
 
-    // Study room floor tile & perimeter wall strips
-    const rug = new THREE.Mesh(
-      new THREE.BoxGeometry(10, 0.06, 7),
-      new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.85 }),
-    );
-    rug.position.set(0, 0.03, 0);
-    rug.receiveShadow = true;
-    scene.add(rug);
+    api.setFrameUpdater((dt, elapsed) => {
+      if (pausedRef.current) return;
+      rig.fanBladeGroup.rotation.y += dt * 3.1;
 
-    // Center bookshelf divider (solid obstacle)
-    const shelf = new THREE.Mesh(
-      new THREE.BoxGeometry(2.4, 2.2, 1.1),
-      new THREE.MeshStandardMaterial({ color: "#78350f", roughness: 0.75 }),
-    );
-    shelf.position.set(0, 1.1, -0.5);
-    shelf.castShadow = true;
-    shelf.receiveShadow = true;
-    scene.add(shelf);
-
-    const obstacles: ObstacleBox[] = [
-      {
-        minX: -1.4,
-        maxX: 1.4,
-        minZ: -1.2,
-        maxZ: 0.2,
-        maxY: 2.3,
-        label: { en: "Bookshelf Divider", bn: "বইয়ের তাক" },
-      },
-    ];
-    api.registerObstacles(obstacles);
-
-    const stationDefs: {
-      id: "phone" | "monitor" | "router";
-      x: number;
-      z: number;
-      color: string;
-      label: { en: string; bn: string };
-    }[] = [
-      {
-        id: "phone",
-        x: -6.5,
-        z: 2.5,
-        color: "#38bdf8",
-        label: { en: "Desk Smartphone", bn: "ডেস্ক স্মার্টফোন" },
-      },
-      {
-        id: "monitor",
-        x: 0,
-        z: -5.5,
-        color: "#f59e0b",
-        label: { en: "App Telemetry Screen", bn: "অ্যাপ মনিটর স্ক্রিন" },
-      },
-      {
-        id: "router",
-        x: 6.5,
-        z: 2.5,
-        color: "#22c55e",
-        label: { en: "Wi-Fi Offload Hub", bn: "ওয়াই-ফাই হাব" },
-      },
-    ];
-
-    const stations: InteractiveStation[] = [];
-    stationDefs.forEach((def) => {
-      const desk = new THREE.Mesh(
-        new THREE.BoxGeometry(2.1, 0.95, 1.4),
-        new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.6 }),
-      );
-      desk.position.set(def.x, 0.48, def.z);
-      desk.castShadow = true;
-      scene.add(desk);
-
-      const prop = new THREE.Mesh(
-        def.id === "phone"
-          ? new THREE.BoxGeometry(0.65, 0.14, 1.15)
-          : def.id === "monitor"
-            ? new THREE.BoxGeometry(1.5, 0.95, 0.16)
-            : new THREE.BoxGeometry(1.0, 0.35, 0.65),
-        new THREE.MeshStandardMaterial({
-          color: def.color,
-          emissive: def.color,
-          emissiveIntensity: 0.35,
-        }),
-      );
-      prop.position.set(def.x, def.id === "monitor" ? 1.45 : 1.05, def.z);
-      scene.add(prop);
-
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(1.4, 1.72, 28),
-        new THREE.MeshBasicMaterial({ color: "#fbbf24", side: THREE.DoubleSide }),
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.set(def.x, 0.08, def.z);
-      scene.add(ring);
-
-      const hit = new THREE.Mesh(
-        new THREE.CylinderGeometry(1.6, 1.6, 2.2, 12),
-        new THREE.MeshBasicMaterial({ visible: false }),
-      );
-      hit.position.set(def.x, 1.1, def.z);
-      scene.add(hit);
-
-      obstacles.push({
-        minX: def.x - 1.05,
-        maxX: def.x + 1.05,
-        minZ: def.z - 0.7,
-        maxZ: def.z + 0.7,
-        maxY: 1.6,
-        label: def.label,
-      });
-
-      stations.push({
-        id: def.id,
-        label: def.label,
-        position: new THREE.Vector3(def.x, 0, def.z),
-        state: "idle",
-        hitMesh: hit,
-        ringMesh: ring,
-      });
-    });
-
-    api.registerObstacles(obstacles);
-    stationsRef.current = stations;
-    api.registerStations(stations);
-
-    // Floating 3D data cubes representing daily megabytes
-    const cubes: THREE.Mesh[] = [];
-    for (let i = 0; i < 8; i++) {
-      const cube = new THREE.Mesh(
-        new THREE.BoxGeometry(0.45, 0.45, 0.45),
-        new THREE.MeshStandardMaterial({
-          color: "#f43f5e",
-          emissive: "#e11d48",
-          emissiveIntensity: 0.65,
-        }),
-      );
-      cube.position.set(-3.5 + i * 1.0, 2.8, 0);
-      scene.add(cube);
-      cubes.push(cube);
-    }
-    packetCubesRef.current = cubes;
-
-    api.setFrameUpdater((_dt, elapsed) => {
-      cubes.forEach((c, idx) => {
+      rig.packetCubes.forEach((c, idx) => {
         c.rotation.y = elapsed * 1.4 + idx * 0.4;
-        c.position.y = 2.7 + Math.sin(elapsed * 2.2 + idx) * 0.25;
+        c.position.y = 3.05 + Math.sin(elapsed * 2.2 + idx) * 0.18;
+      });
+
+      const speedFactor = 0.25 + (metricsRef.current.studyMbps / 16) * 1.15;
+      rig.fiberPulses.forEach((p) => {
+        const t = (elapsed * speedFactor + p.phase) % 1;
+        _pulseLerpPos.lerpVectors(p.start, p.end, t);
+        _pulseLerpPos.y += Math.sin(t * Math.PI) * 0.55;
+        p.mesh.position.copy(_pulseLerpPos);
       });
     });
 
-    return () => {};
+    return () => {
+      rigRef.current = null;
+      rig.dispose();
+    };
   }, []);
+
+  const handleVerifyPlan = () => {
+    if (!metrics.studyLinkValid) {
+      setVerifyNotice(
+        lang === "en"
+          ? "Keep Essential Live Class & Study PDFs active at the Telemetry Workstation!"
+          : "টেলিমেট্রি ওয়ার্কস্টেশনে জরুরি লাইভ ক্লাস ও স্টাডি পিডিএফ অবশ্যই চালু রাখুন!",
+      );
+      return;
+    }
+    if (!metrics.allAudited) {
+      setVerifyNotice(
+        lang === "en"
+          ? `Inspect all 4 apartment stations first (${metrics.auditedCount}/4 audited).`
+          : `প্রথমে বাসার ৪টি স্টেশনই পরীক্ষা করুন (${metrics.auditedCount}/৪টি সম্পন্ন)।`,
+      );
+      return;
+    }
+    if (!metrics.underDataCap || !metrics.meetsSpeedTarget) {
+      setVerifyNotice(
+        lang === "en"
+          ? `Reach ≤ ${DATA_BUDGET_CAP_MB} MB daily drain AND ≥ ${STUDY_SPEED_GOAL_MBPS} Mbps speed.`
+          : `দৈনিক খরচ ≤ ${DATA_BUDGET_CAP_MB} MB এবং স্টাডি গতি ≥ ${STUDY_SPEED_GOAL_MBPS} Mbps অর্জন করুন।`,
+      );
+      return;
+    }
+    setSolved(true);
+    setVerifyNotice(null);
+    onProgressRef.current(100);
+    onCompleteRef.current();
+  };
 
   return (
     <div className="relative w-full h-[540px] sm:h-[600px]">
       <ThreeMissionHarness
-        bounds={{ minX: -11, maxX: 11, minZ: -9, maxZ: 9 }}
-        initialPlayerPos={[0, 0, 5.8]}
-        initialCameraOffset={[0, 10, 13]}
-        skyColor="#7dd3fc"
+        bounds={{ minX: -10.8, maxX: 10.8, minZ: -8.6, maxZ: 8.6 }}
+        initialPlayerPos={[0, 0, 6.2]}
+        initialCameraOffset={[0, 10.5, 13.8]}
+        skyColor="#93c5fd"
         fogColor="#dbeafe"
         cityBackdrop="dhaka"
         paused={paused}
         onSceneReady={handleSceneReady}
-        onStationInteract={(id) => setActiveStation(id as "phone" | "monitor" | "router")}
+        onStationInteract={handleOpenStation}
       />
 
-      {/* Bottom Center Live MB Meter Pill (zero top HUD overlap) */}
-      <div className="pointer-events-none absolute bottom-32 md:bottom-4 left-1/2 -translate-x-1/2 max-w-[calc(100%-1.5rem)] z-10 rounded-xl bg-slate-950/92 border border-white/15 px-3.5 sm:px-4 py-1.5 sm:py-2 text-center shadow-xl">
-        <div className="text-[10px] font-mono text-slate-400">
-          {lang === "en" ? "DAILY DATA DRAIN (GOAL ≤ 400 MB)" : "দৈনিক ডেটা খরচ (লক্ষ্য ≤ ৪০০ MB)"}
+      {/* Bottom Center Live Telemetry Dock (zero backdrop-filter over WebGL) */}
+      <div className="pointer-events-auto absolute bottom-32 md:bottom-4 left-1/2 -translate-x-1/2 max-w-[calc(100%-1.5rem)] z-10 rounded-xl bg-slate-950/95 border border-white/15 px-3.5 sm:px-5 py-2.5 shadow-xl flex flex-wrap items-center justify-center gap-3 sm:gap-5 text-white">
+        <div className="flex items-center gap-2">
+          <Database className="w-4 h-4 text-sky-400 shrink-0" />
+          <div>
+            <div className="text-[10px] font-mono text-slate-400">
+              {lang === "en"
+                ? `DATA DRAIN (≤ ${DATA_BUDGET_CAP_MB} MB)`
+                : `ডেটা খরচ (≤ ${DATA_BUDGET_CAP_MB} MB)`}
+            </div>
+            <div
+              className={`text-sm sm:text-base font-mono font-bold tabular-nums ${
+                metrics.underDataCap ? "text-emerald-400" : "text-rose-400"
+              }`}
+            >
+              {metrics.totalMb} MB
+            </div>
+          </div>
         </div>
-        <div
-          className={`text-xl font-mono-num font-bold ${underBudget ? "text-emerald-400" : "text-rose-400"}`}
-        >
-          {totalMb} MB
+
+        <div className="h-7 w-px bg-white/10 hidden sm:block" />
+
+        <div className="flex items-center gap-2">
+          <Gauge className="w-4 h-4 text-amber-400 shrink-0" />
+          <div>
+            <div className="text-[10px] font-mono text-slate-400">
+              {lang === "en"
+                ? `STUDY SPEED (≥ ${STUDY_SPEED_GOAL_MBPS} Mbps)`
+                : `স্টাডি গতি (≥ ${STUDY_SPEED_GOAL_MBPS} Mbps)`}
+            </div>
+            <div
+              className={`text-sm sm:text-base font-mono font-bold tabular-nums ${
+                metrics.meetsSpeedTarget ? "text-emerald-400" : "text-amber-300"
+              }`}
+            >
+              {metrics.studyMbps} Mbps
+            </div>
+          </div>
         </div>
+
+        <div className="h-7 w-px bg-white/10 hidden sm:block" />
+
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+          <div>
+            <div className="text-[10px] font-mono text-slate-400">
+              {lang === "en" ? "AUDIT CHECK" : "অডিট ধাপ"}
+            </div>
+            <div className="text-sm sm:text-base font-mono font-bold tabular-nums text-white">
+              {metrics.auditedCount}/4
+            </div>
+          </div>
+        </div>
+
+        {!solved && (
+          <button
+            type="button"
+            onClick={handleVerifyPlan}
+            className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+              metrics.canVerify
+                ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10"
+            }`}
+          >
+            {lang === "en" ? "Verify & Lock Plan" : "পরিকল্পনা যাচাই করুন"}
+          </button>
+        )}
       </div>
 
-      {/* Station Hardware Modal Controls */}
+      {verifyNotice && (
+        <div
+          role="alert"
+          className="absolute bottom-52 md:bottom-20 left-1/2 -translate-x-1/2 z-20 max-w-md w-[calc(100%-2rem)] rounded-xl bg-rose-950/95 border border-rose-400/50 px-3.5 py-2.5 text-xs font-medium text-rose-100 flex items-center gap-2 shadow-xl"
+        >
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <span>{verifyNotice}</span>
+        </div>
+      )}
+
+      {/* Station Hardware Inspector Modal */}
       {activeStation && (
-        <div className="absolute bottom-32 sm:bottom-20 left-3 right-3 sm:left-auto sm:right-4 sm:w-96 max-h-[48vh] overflow-y-auto z-30 rounded-2xl bg-slate-950/95 border border-white/20 p-4 shadow-2xl space-y-3 text-white">
+        <div className="absolute bottom-36 sm:bottom-24 left-3 right-3 sm:left-auto sm:right-4 sm:w-96 max-h-[50vh] overflow-y-auto z-30 rounded-2xl bg-slate-950/95 border border-white/20 p-4 shadow-2xl space-y-3 text-white">
           <div className="flex items-center justify-between border-b border-white/10 pb-2">
             <div className="flex items-center gap-2 text-xs font-bold">
               {activeStation === "phone" && <Smartphone className="w-4 h-4 text-sky-400" />}
-              {activeStation === "monitor" && <AlertTriangle className="w-4 h-4 text-amber-400" />}
+              {activeStation === "monitor" && <Server className="w-4 h-4 text-amber-400" />}
               {activeStation === "router" && <Wifi className="w-4 h-4 text-emerald-400" />}
+              {activeStation === "tv" && <Tv className="w-4 h-4 text-rose-400" />}
               <span>
                 {activeStation === "phone"
                   ? lang === "en"
-                    ? "Desk Smartphone · Video Quality"
-                    : "ডেস্ক স্মার্টফোন · ভিডিও মান"
+                    ? "Desk Smartphone · Stream & Tether"
+                    : "ডেস্ক স্মার্টফোন · স্ট্রিম ও হটস্পট"
                   : activeStation === "monitor"
                     ? lang === "en"
-                      ? "Telemetry Monitor · Autoplay"
-                      : "মনিটর · অটোপ্লে"
-                    : lang === "en"
-                      ? "Wi-Fi Hub · Background Sync"
-                      : "ওয়াই-ফাই হাব · ব্যাকগ্রাউন্ড সিঙ্ক"}
+                      ? "Workstation · QoS & Study Link"
+                      : "ওয়ার্কস্টেশন · QoS ও স্টাডি লিংক"
+                    : activeStation === "router"
+                      ? lang === "en"
+                        ? "Wi-Fi Fiber Router · Band & Sync"
+                        : "রাউটার · ব্যান্ড ও ব্যাকগ্রাউন্ড সিঙ্ক"
+                      : lang === "en"
+                        ? "Smart TV Corner · Uplink Audit"
+                        : "স্মার্ট টিভি কর্নার · আপলিংক অডিট"}
               </span>
             </div>
             <button
               type="button"
               onClick={() => setActiveStation(null)}
-              className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20"
+              className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20 cursor-pointer"
             >
               {lang === "en" ? "Close" : "বন্ধ"}
             </button>
           </div>
 
           {activeStation === "phone" && (
-            <div className="space-y-2">
-              <div className="grid grid-cols-3 gap-2">
-                {(["1080p", "480p", "360p"] as const).map((res) => (
-                  <button
-                    key={res}
-                    type="button"
-                    onClick={() => setVideoRes(res)}
-                    className={`py-2 rounded-lg text-xs font-mono font-bold border ${
-                      videoRes === res
-                        ? "bg-rose-600 border-rose-500 text-white"
-                        : "bg-slate-900 border-slate-700 text-slate-300"
-                    }`}
-                  >
-                    {res}
-                  </button>
-                ))}
+            <div className="space-y-3">
+              <div>
+                <div className="text-[11px] font-semibold text-slate-300 mb-1.5">
+                  {lang === "en" ? "Mobile Video Resolution" : "মোবাইল ভিডিও রেজোলিউশন"}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(["1080p", "480p", "360p"] as const).map((res) => (
+                    <button
+                      key={res}
+                      type="button"
+                      onClick={() => setAuditState((p) => ({ ...p, videoRes: res }))}
+                      className={`py-2 rounded-lg text-xs font-mono font-bold border cursor-pointer ${
+                        auditState.videoRes === res
+                          ? "bg-rose-600 border-rose-500 text-white"
+                          : "bg-slate-900 border-slate-700 text-slate-300"
+                      }`}
+                    >
+                      {res} ({getVideoDailyMb(res)} MB)
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="text-[11px] text-slate-300">
-                {lang === "en"
-                  ? `Video playback uses ${videoMb} MB/day (+70 MB study PDFs always kept active).`
-                  : `ভিডিওতে ${videoMb} MB (+৭০ MB স্টাডি পিডিএফ সর্বদা সচল)।`}
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                <div>
+                  <div className="text-xs font-bold">
+                    {lang === "en" ? "Phone Mobile Hotspot Tether" : "মোবাইল হটস্পট শেয়ারিং"}
+                  </div>
+                  <div className="text-[11px] font-mono text-amber-300">
+                    +160 MB · -4 Mbps speed drag
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAuditState((p) => ({ ...p, hotspotTether: !p.hotspotTether }))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                    auditState.hotspotTether
+                      ? "bg-rose-600 text-white"
+                      : "bg-emerald-600 text-white"
+                  }`}
+                >
+                  {auditState.hotspotTether
+                    ? lang === "en"
+                      ? "Disable"
+                      : "বন্ধ করুন"
+                    : lang === "en"
+                      ? "Off ✓"
+                      : "বন্ধ ✓"}
+                </button>
               </div>
             </div>
           )}
 
           {activeStation === "monitor" && (
-            <label className="flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-700 cursor-pointer">
-              <div>
-                <div className="text-xs font-bold">
-                  {lang === "en" ? "Feed Video Autoplay" : "ফিড ভিডিও অটোপ্লে"}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                <div>
+                  <div className="text-xs font-bold">
+                    {lang === "en" ? "Feed Video Autoplay" : "ফিড ভিডিও অটোপ্লে"}
+                  </div>
+                  <div className="text-[11px] font-mono text-amber-300">+190 MB / day</div>
                 </div>
-                <div className="text-[11px] font-mono-num text-amber-300">210 MB / day</div>
+                <button
+                  type="button"
+                  onClick={() => setAuditState((p) => ({ ...p, autoPlay: !p.autoPlay }))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                    auditState.autoPlay ? "bg-rose-600 text-white" : "bg-emerald-600 text-white"
+                  }`}
+                >
+                  {auditState.autoPlay
+                    ? lang === "en"
+                      ? "Pause"
+                      : "বন্ধ করুন"
+                    : lang === "en"
+                      ? "Paused ✓"
+                      : "বন্ধ ✓"}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setAutoPlay((v) => !v)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
-                  autoPlay ? "bg-rose-600 text-white" : "bg-emerald-600 text-white"
-                }`}
-              >
-                {autoPlay
-                  ? lang === "en"
-                    ? "Turn Off"
-                    : "বন্ধ করুন"
-                  : lang === "en"
-                    ? "Paused ✓"
-                    : "বন্ধ আছে ✓"}
-              </button>
-            </label>
+
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                <div>
+                  <div className="text-xs font-bold">
+                    {lang === "en" ? "Traffic Shaping (QoS)" : "ট্র্যাফিক প্রায়োরিটি (QoS)"}
+                  </div>
+                  <div className="text-[11px] font-mono text-sky-300">
+                    {auditState.qosMode === "unrestricted"
+                      ? "Game preloads (+140 MB · -4 Mbps)"
+                      : "Study Priority (+0 MB · +5 Mbps)"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAuditState((p) => ({
+                      ...p,
+                      qosMode: p.qosMode === "unrestricted" ? "study" : "unrestricted",
+                    }))
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                    auditState.qosMode === "study"
+                      ? "bg-emerald-600 text-white"
+                      : "bg-amber-600 text-white"
+                  }`}
+                >
+                  {auditState.qosMode === "study"
+                    ? lang === "en"
+                      ? "Study QoS ✓"
+                      : "স্টাডি মোড ✓"
+                    : lang === "en"
+                      ? "Set Study QoS"
+                      : "স্টাডি মোড দিন"}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                <div>
+                  <div className="text-xs font-bold">
+                    {lang === "en"
+                      ? "Essential Live Class & Study PDFs"
+                      : "জরুরি লাইভ ক্লাস ও স্টাডি পিডিএফ"}
+                  </div>
+                  <div className="text-[11px] font-mono text-emerald-300">
+                    130 MB · Required Active
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAuditState((p) => ({ ...p, studyClassActive: !p.studyClassActive }))
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                    auditState.studyClassActive
+                      ? "bg-emerald-600 text-white"
+                      : "bg-rose-600 text-white"
+                  }`}
+                >
+                  {auditState.studyClassActive
+                    ? lang === "en"
+                      ? "Active ✓"
+                      : "চালু ✓"
+                    : lang === "en"
+                      ? "Re-enable!"
+                      : "চালু করুন!"}
+                </button>
+              </div>
+            </div>
           )}
 
           {activeStation === "router" && (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                <div>
+                  <div className="text-xs font-bold">
+                    {lang === "en" ? "Wi-Fi Radio Band" : "ওয়াই-ফাই রেডিও ব্যান্ড"}
+                  </div>
+                  <div className="text-[11px] font-mono text-sky-300">
+                    {auditState.wifiBand === "2.4ghz"
+                      ? "2.4 GHz Crowded (5 Mbps base)"
+                      : "5 GHz Clean Channel (11 Mbps base)"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAuditState((p) => ({
+                      ...p,
+                      wifiBand: p.wifiBand === "2.4ghz" ? "5ghz" : "2.4ghz",
+                    }))
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                    auditState.wifiBand === "5ghz"
+                      ? "bg-emerald-600 text-white"
+                      : "bg-amber-600 text-white"
+                  }`}
+                >
+                  {auditState.wifiBand === "5ghz" ? "5 GHz ✓" : "Switch 5 GHz"}
+                </button>
+              </div>
+
               <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-700">
                 <div>
                   <div className="text-xs font-bold">
                     {lang === "en" ? "Cellular Cloud Photo Sync" : "মোবাইল ক্লাউড ফটো সিঙ্ক"}
                   </div>
-                  <div className="text-[11px] font-mono-num text-amber-300">140 MB</div>
+                  <div className="text-[11px] font-mono text-amber-300">+130 MB · -1 Mbps</div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setCloudSync((v) => !v)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
-                    cloudSync ? "bg-rose-600 text-white" : "bg-emerald-600 text-white"
+                  onClick={() => setAuditState((p) => ({ ...p, cloudSync: !p.cloudSync }))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                    auditState.cloudSync ? "bg-rose-600 text-white" : "bg-emerald-600 text-white"
                   }`}
                 >
-                  {cloudSync
+                  {auditState.cloudSync
                     ? lang === "en"
                       ? "Wi-Fi Only"
                       : "ওয়াই-ফাইয়ে নিন"
@@ -361,45 +527,110 @@ export const DhakaGame1DataDetective3D: React.FC<DhakaSceneProps> = ({
                       : "সম্পন্ন ✓"}
                 </button>
               </div>
+
               <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-700">
                 <div>
                   <div className="text-xs font-bold">
-                    {lang === "en" ? "Background App Updates" : "ব্যাকগ্রাউন্ড অ্যাপ আপডেট"}
+                    {lang === "en" ? "Background OS & App Updates" : "ব্যাকগ্রাউন্ড অ্যাপ আপডেট"}
                   </div>
-                  <div className="text-[11px] font-mono-num text-amber-300">110 MB</div>
+                  <div className="text-[11px] font-mono text-amber-300">+100 MB</div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setBgUpdates((v) => !v)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
-                    bgUpdates ? "bg-rose-600 text-white" : "bg-emerald-600 text-white"
+                  onClick={() => setAuditState((p) => ({ ...p, bgUpdates: !p.bgUpdates }))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                    auditState.bgUpdates ? "bg-rose-600 text-white" : "bg-emerald-600 text-white"
                   }`}
                 >
-                  {bgUpdates
+                  {auditState.bgUpdates
                     ? lang === "en"
-                      ? "Wi-Fi Only"
-                      : "ওয়াই-ফাইয়ে নিন"
+                      ? "Schedule Night"
+                      : "রাতে শিডিউল"
                     : lang === "en"
-                      ? "Wi-Fi Only ✓"
+                      ? "Scheduled ✓"
+                      : "শিডিউলড ✓"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeStation === "tv" && (
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                <div>
+                  <div className="text-xs font-bold">
+                    {lang === "en" ? "Smart TV Internet Source" : "স্মার্ট টিভি সংযোগ"}
+                  </div>
+                  <div className="text-[11px] font-mono text-amber-300">
+                    {auditState.tvSource === "hotspot"
+                      ? "Mobile Hotspot (+220 MB · -3 Mbps)"
+                      : "Home Broadband Fiber (0 MB mobile)"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAuditState((p) => ({
+                      ...p,
+                      tvSource: p.tvSource === "hotspot" ? "fiber" : "hotspot",
+                    }))
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                    auditState.tvSource === "fiber"
+                      ? "bg-emerald-600 text-white"
+                      : "bg-rose-600 text-white"
+                  }`}
+                >
+                  {auditState.tvSource === "fiber"
+                    ? lang === "en"
+                      ? "Fiber Wi-Fi ✓"
+                      : "ফাইবার ✓"
+                    : lang === "en"
+                      ? "Move to Fiber"
+                      : "ফাইবারে নিন"}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-700">
+                <div>
+                  <div className="text-xs font-bold">
+                    {lang === "en" ? "4K Screensaver Live Loop" : "৪কে লাইভ স্ক্রিনসেভার"}
+                  </div>
+                  <div className="text-[11px] font-mono text-amber-300">+110 MB / day</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAuditState((p) => ({ ...p, tvAmbientLoop: !p.tvAmbientLoop }))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                    auditState.tvAmbientLoop
+                      ? "bg-rose-600 text-white"
+                      : "bg-emerald-600 text-white"
+                  }`}
+                >
+                  {auditState.tvAmbientLoop
+                    ? lang === "en"
+                      ? "Static Clock"
+                      : "স্থির ঘড়ি দিন"
+                    : lang === "en"
+                      ? "Static Clock ✓"
                       : "সম্পন্ন ✓"}
                 </button>
               </div>
             </div>
           )}
 
-          {underBudget && !solved && (
+          {metrics.canVerify && !solved && (
             <button
               type="button"
-              onClick={() => {
-                setSolved(true);
-                onProgressRef.current(100);
-                onCompleteRef.current();
-              }}
-              className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
+              onClick={handleVerifyPlan}
+              className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              {lang === "en"
-                ? `Confirm Optimized Plan (${totalMb} MB)`
-                : `সাশ্রয়ী পরিকল্পনা নিশ্চিত করুন (${totalMb} MB)`}
+              <CheckCircle2 className="w-4 h-4" />
+              <span>
+                {lang === "en"
+                  ? `Confirm Audit (${metrics.totalMb} MB · ${metrics.studyMbps} Mbps)`
+                  : `অডিট নিশ্চিত করুন (${metrics.totalMb} MB · ${metrics.studyMbps} Mbps)`}
+              </span>
             </button>
           )}
         </div>

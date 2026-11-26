@@ -106,9 +106,9 @@ function loadInitialState(): PersistedState {
       return {
         lang: parsed.lang === "bn" ? "bn" : "en",
         activeCityId:
-          parsed.activeCityId === "dhaka" || parsed.activeCityId === "sylhet"
+          parsed.activeCityId === "chattogram" || parsed.activeCityId === "sylhet"
             ? parsed.activeCityId
-            : "chattogram",
+            : "dhaka",
         completedTrailIds: sanitizeTrailIds(parsed.completedTrailIds),
         localCertificateIds: sanitizeCertIds(parsed.localCertificateIds),
       };
@@ -118,7 +118,7 @@ function loadInitialState(): PersistedState {
   }
   return {
     lang: "en",
-    activeCityId: "chattogram",
+    activeCityId: "dhaka",
     completedTrailIds: [],
     localCertificateIds: [],
   };
@@ -503,7 +503,7 @@ export function RobiTrailProvider({ children }: { children: React.ReactNode }) {
       setPreviewPassActive(false);
       setState({
         lang: stateRef.current.lang,
-        activeCityId: "chattogram",
+        activeCityId: "dhaka",
         completedTrailIds: [],
         localCertificateIds: [],
       });

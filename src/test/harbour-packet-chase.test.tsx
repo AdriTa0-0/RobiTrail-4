@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { HarbourLoseModal } from "@/robi/components/game/chattogram3d/HarbourLoseModal";
 import {
   computeHarbourProgressPct,
+  computeHarbourSpeed,
   detectHarbourHazardCollision,
   getChancesRemainingAfterRetry,
   HARBOUR_BOOST_RING_POSITIONS,
@@ -18,6 +19,7 @@ import {
   HARBOUR_PRACTICE_RING_POS,
   HARBOUR_START_Z,
   HARBOUR_STATIC_CONTAINER_PLACEMENTS,
+  HARBOUR_STEER_LIMIT_X,
   HARBOUR_TOTAL_DISTANCE_M,
   HARBOUR_WORLD_BOUNDS,
   type HarbourCraneBox,
@@ -26,13 +28,13 @@ import {
 
 describe("Harbour Packet Chase collision & retry chances", () => {
   const obstacles: HarbourObstacleBox[] = [
-    { x: -4.2, z: 44, halfW: 1.45, halfD: 2.35, kind: "container" },
+    { x: -4.8, z: 44, halfW: 1.45, halfD: 2.35, kind: "container" },
     { x: 0, z: 16, halfW: 1.35, halfD: 2.9, kind: "truck" },
   ];
   const cranes: HarbourCraneBox[] = [{ x: 1.5, z: 4 }];
 
   it("detects truck, container block, and crane hook collisions immediately", () => {
-    expect(detectHarbourHazardCollision(-4.0, 43.5, obstacles, cranes)).toBe("container");
+    expect(detectHarbourHazardCollision(-4.6, 43.5, obstacles, cranes)).toBe("container");
     expect(detectHarbourHazardCollision(0.2, 16.0, obstacles, cranes)).toBe("truck");
     expect(detectHarbourHazardCollision(1.8, 4.2, obstacles, cranes)).toBe("crane");
     expect(detectHarbourHazardCollision(5.5, 60.0, obstacles, cranes)).toBeNull();
@@ -46,7 +48,30 @@ describe("Harbour Packet Chase collision & retry chances", () => {
     expect(computeHarbourProgressPct(HARBOUR_FINISH_Z)).toBe(100);
   });
 
-  it("keeps all six boost rings, obstacles, cranes, interference zones, and gateway within bounds", () => {
+  it("smoothly ramps speed upward as distance increases", () => {
+    const startSpeed = computeHarbourSpeed(0, {
+      tutorialActive: false,
+      boostActive: false,
+      inputBoost: false,
+      inputBrake: false,
+    });
+    const midSpeed = computeHarbourSpeed(50, {
+      tutorialActive: false,
+      boostActive: false,
+      inputBoost: false,
+      inputBrake: false,
+    });
+    const endSpeed = computeHarbourSpeed(100, {
+      tutorialActive: false,
+      boostActive: false,
+      inputBoost: false,
+      inputBrake: false,
+    });
+    expect(midSpeed).toBeGreaterThan(startSpeed);
+    expect(endSpeed).toBeGreaterThan(midSpeed);
+  });
+
+  it("keeps all six boost rings, obstacles, cranes, interference zones, and gateway within bounds with wide dodging gaps", () => {
     const deckMinZ = HARBOUR_DECK_CENTER_Z - HARBOUR_DECK_LENGTH / 2;
     const deckMaxZ = HARBOUR_DECK_CENTER_Z + HARBOUR_DECK_LENGTH / 2;
 
@@ -67,10 +92,16 @@ describe("Harbour Packet Chase collision & retry chances", () => {
       expect(ox).toBeLessThanOrEqual(HARBOUR_WORLD_BOUNDS.maxX);
       expect(oz).toBeGreaterThan(HARBOUR_FINISH_Z);
       expect(oz).toBeLessThan(HARBOUR_START_Z);
+      // Every static container maintains >= 15m Z-gap from every patrolling lorry
+      for (const lorry of HARBOUR_LORRY_CONFIGS) {
+        expect(Math.abs(oz - lorry.z)).toBeGreaterThanOrEqual(15);
+      }
     }
 
     for (const lorry of HARBOUR_LORRY_CONFIGS) {
       expect(lorry.amp).toBeLessThan(HARBOUR_WORLD_BOUNDS.maxX);
+      // Even at extreme lateral sweep, at least 2m clear side lane remains within steer limits
+      expect(HARBOUR_STEER_LIMIT_X - (lorry.amp + 1.35)).toBeGreaterThanOrEqual(2.0);
       expect(lorry.z).toBeGreaterThan(HARBOUR_FINISH_Z);
       expect(lorry.z).toBeLessThan(HARBOUR_START_Z);
     }

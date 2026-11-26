@@ -25,6 +25,7 @@ export interface TrailEngineProps {
   onProgress: (pct: number) => void;
   onComplete: () => void;
   onMistake?: (actionKey: string) => void;
+  onExitToCity?: () => void;
 }
 
 export const MissionShell: React.FC<{ onNavigateToTokens: () => void }> = ({
@@ -53,6 +54,7 @@ export const MissionShell: React.FC<{ onNavigateToTokens: () => void }> = ({
   const isLockedPremium = !isTrailUnlocked(activeTrail);
 
   const handleComplete = () => {
+    if (justCompleted) return;
     completeTrail(activeTrail.id);
     setProgressPct(100);
     setJustCompleted(true);
@@ -231,6 +233,7 @@ export const MissionShell: React.FC<{ onNavigateToTokens: () => void }> = ({
                   onProgress={setProgressPct}
                   onComplete={handleComplete}
                   onMistake={(key) => reportGameMistake(activeTrail.id, key)}
+                  onExitToCity={closeTrail}
                 />
               )}
               {activeTrail.cityId === "dhaka" && (

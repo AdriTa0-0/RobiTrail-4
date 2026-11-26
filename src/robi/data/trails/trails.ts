@@ -186,8 +186,8 @@ export const TRAILS: TrailConfig[] = [
       bn: "চট্টগ্রাম বন্দর পিয়ারে প্যাকেট স্টিয়ারিং",
     },
     objective: {
-      en: "Pilot the Packet Carrier Drone down the 160m Chattogram Harbour Pier to the Gateway while dodging cranes, cargo trucks, and interference.",
-      bn: "ক্রেন, কার্গো ট্রাক ও ইন্টারফেরেন্স এড়িয়ে ১৬০ মিটার চট্টগ্রাম বন্দর পিয়ার পেরিয়ে গেটওয়েতে প্যাকেট পৌঁছে দিন।",
+      en: "Pilot the Packet Carrier Drone down the 240m Chattogram Harbour Pier to the Gateway while dodging cranes, cargo trucks, and interference.",
+      bn: "ক্রেন, কার্গো ট্রাক ও ইন্টারফেরেন্স এড়িয়ে ২৪০ মিটার চট্টগ্রাম বন্দর পিয়ার পেরিয়ে গেটওয়েতে প্যাকেট পৌঁছে দিন।",
     },
     howToPlay: [
       {
@@ -311,50 +311,50 @@ export const TRAILS: TrailConfig[] = [
     iconType: "data-meter",
     title: { en: "Data Detective", bn: "ডেটা গোয়েন্দা" },
     subtitle: {
-      en: "3D Study Desk & Smartphone Data Lab",
-      bn: "৩ডি স্টাডি ডেস্ক ও স্মার্টফোন ডেটা ল্যাব",
+      en: "3D Dhaka Apartment Network & Speed Audit",
+      bn: "৩ডি ঢাকা অ্যাপার্টমেন্ট নেটওয়ার্ক ও গতি অডিট",
     },
     objective: {
-      en: "Inspect 3D room hardware (Study Phone, App Telemetry Desk, Wi-Fi Offload Hub) to cut mobile drain from 850 MB to ≤ 400 MB.",
-      bn: "৩ডি কক্ষে ফোন, অ্যাপ মনিটর এবং ওয়াই-ফাই হাব পরিচালনা করে মোবাইল ডেটা খরচ ৮৫০ MB থেকে ৪০০ MB বা তার নিচে নামান।",
+      en: "Audit all 4 Dhaka apartment stations (Smartphone, Workstation, Wi-Fi Router, Smart TV) to cut daily drain from 1,440 MB to ≤ 350 MB AND boost study speed to ≥ 12 Mbps.",
+      bn: "ঢাকা অ্যাপার্টমেন্টের ৪টি স্টেশন (স্মার্টফোন, ওয়ার্কস্টেশন, ওয়াই-ফাই রাউটার, স্মার্ট টিভি) পরীক্ষা করে দৈনিক ডেটা খরচ ১,৪৪০ MB থেকে ≤ ৩৫০ MB এবং স্টাডি গতি ≥ ১২ Mbps-এ আনুন।",
     },
     howToPlay: [
       {
-        en: "Walk to the Study Phone, Telemetry Console, and Wi-Fi Router inside the Dhaka apartment room.",
-        bn: "৩ডি কক্ষে ফোন ডেস্ক, টেলিমেট্রি স্ক্রিন ও ওয়াই-ফাই রাউটারের কাছে যান।",
+        en: "Inspect all 4 room stations: Desk Smartphone, Telemetry Workstation, Wi-Fi Fiber Router, and Smart TV Corner.",
+        bn: "বাসার ৪টি স্টেশনই পরীক্ষা করুন: ডেস্ক স্মার্টফোন, ওয়ার্কস্টেশন, ওয়াই-ফাই রাউটার ও স্মার্ট টিভি কর্নার।",
       },
       {
-        en: "Operate each station to pause Video Autoplay, offload Cloud Photo Sync to Wi-Fi, and choose 360p/480p stream quality.",
-        bn: "ভিডিও অটোপ্লে বন্ধ করুন, ক্লাউড ব্যাকআপ ওয়াই-ফাইয়ে নিন এবং স্ট্রিমিং মান কমান।",
+        en: "Stop hotspot tethering, move Smart TV to Fiber, switch Router to 5 GHz, enable Study QoS, and lower video resolution.",
+        bn: "হটস্পট বন্ধ করুন, স্মার্ট টিভি ফাইবারে নিন, রাউটার ৫ GHz-এ সেট করুন, স্টাডি QoS চালু করুন এবং ভিডিও মান কমান।",
       },
       {
-        en: "Keep Essential Study PDFs active and lock in your plan at ≤ 400 MB.",
-        bn: "স্টাডি পিডিএফ চালু রেখেই ৪০০ MB-এর নিচে এনে পরিকল্পনা সংরক্ষণ করুন।",
+        en: "Keep Essential Live Class & Study PDFs active, then click Verify & Lock Plan once MB ≤ 350 and Mbps ≥ 12.",
+        bn: "জরুরি লাইভ ক্লাস ও স্টাডি পিডিএফ চালু রেখে ≤ ৩৫০ MB এবং ≥ ১২ Mbps নিশ্চিত করে পরিকল্পনা যাচাই করুন।",
       },
     ],
     watchDemo: {
-      en: "Watch crimson background data cubes stream out of the phone into the airwaves until you tame autoplay and sync.",
-      bn: "অটোপ্লে ও অটো-সিঙ্ক বন্ধ না করলে লাল ডেটা প্যাকেটগুলো কীভাবে নীরবে প্যাক শেষ করে তা দেখুন।",
+      en: "Watch crimson overhead packet cubes shrink as you eliminate leaks and emerald fiber pulses accelerate toward 12+ Mbps.",
+      bn: "অতিরিক্ত ডেটা খরচ কমালে লাল প্যাকেটগুলো কীভাবে কমে এবং ৫ GHz ও QoS দিলে ফাইবার গতি কীভাবে বাড়ে তা দেখুন।",
     },
     tryPrompt: {
-      en: "Walk to the glowing Desk Phone and click it (or Operate) to inspect active apps.",
-      bn: "টেবিলের ওপর থাকা ফোনের কাছে গিয়ে অপারেট বা ক্লিক করুন।",
+      en: "Walk to any of the 4 glowing stations in the Dhaka apartment to begin your 0/4 hardware audit.",
+      bn: "অডিট শুরু করতে ঢাকা অ্যাপার্টমেন্টের ৪টি উজ্জ্বল স্টেশনের যেকোনো একটিতে যান।",
     },
     discoverNote: {
-      en: "Offloading auto-updates and cloud backups to Wi-Fi plus choosing 480p/360p stretches daily study packs more than twice as far.",
-      bn: "অটো-আপডেট ওয়াই-ফাইয়ে রেখে ৩৬০পি/৪৮০পি মান বেছে নিলে একই ডেটা দ্বিগুণ সময় চলে।",
+      en: "Stopping TV mobile hotspots, switching to clean 5 GHz Wi-Fi with Study QoS, and scheduling cloud sync rescues both quota and live lecture speed.",
+      bn: "টিভি হটস্পট বন্ধ, ৫ GHz ওয়াই-ফাই ও স্টাডি QoS ব্যবহার করলে ডেটা প্যাক বাঁচে এবং লাইভ ক্লাসের গতিও বহুগুণ বাড়ে।",
     },
     tip: {
-      en: "Visit both the Smartphone Desk (quality/autoplay) and the Wi-Fi Router Desk (cloud sync & updates).",
-      bn: "স্মার্টফোন ডেস্ক এবং ওয়াই-ফাই রাউটার—উভয় স্টেশনই পরিচালনা করুন।",
+      en: "You must visit all 4 stations (Phone, Workstation, Router, Smart TV) and achieve BOTH ≤ 350 MB and ≥ 12 Mbps.",
+      bn: "৪টি স্টেশনই ভিজিট করে ≤ ৩৫০ MB খরচ এবং ≥ ১২ Mbps গতি—উভয় লক্ষ্য পূরণ করতে হবে।",
     },
     hintTarget: {
-      en: "Target Highlight: Look at the 3 highlighted stations—Desk Smartphone, Telemetry Monitor, and Wi-Fi Router.",
-      bn: "টার্গেট নির্দেশ: ডেস্ক ফোন, টেলিমেট্রি মনিটর এবং ওয়াই-ফাই রাউটার স্টেশনগুলো দেখুন।",
+      en: "Target Highlight: Check the Smart TV Hotspot Corner, 5 GHz Router Band, and Workstation Study QoS.",
+      bn: "টার্গেট নির্দেশ: স্মার্ট টিভি হটস্পট, ৫ GHz রাউটার ব্যান্ড এবং ওয়ার্কস্টেশন স্টাডি QoS পরীক্ষা করুন।",
     },
     hintAction: {
-      en: "Next Action: Set video to 360p/480p at Desk Phone, disable Autoplay at Monitor, offload Updates at Wi-Fi Router, then confirm ≤ 400 MB.",
-      bn: "পরবর্তী কাজ: ভিডিও ৪৮০পি/৩৬০পি করুন, অটোপ্লে ও ব্যাকগ্রাউন্ড আপডেট বন্ধ করে কনফার্ম চাপুন।",
+      en: "Next Action: Audit all 4 stations, turn off Phone/TV hotspot drains, set 5 GHz + Study QoS, choose 480p/360p, and verify.",
+      bn: "পরবর্তী কাজ: ৪টি স্টেশন অডিট করুন, হটস্পট ও অটোপ্লে বন্ধ করুন, ৫ GHz ও স্টাডি QoS দিয়ে যাচাই করুন।",
     },
     handbookTopicId: "what-is-mobile-data",
     isPremium: false,

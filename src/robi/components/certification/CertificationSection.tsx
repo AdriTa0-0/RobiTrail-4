@@ -4,7 +4,7 @@ import { CITIES } from "../../data/cities/cities";
 import { TRAILS } from "../../data/trails/trails";
 import { t, UI_DICT } from "../../data/translations/dictionary";
 import { getSubscriberToken } from "../../services/auth/sessionMemory";
-import { Award, CheckCircle2, Download, ShieldAlert, FileCheck2 } from "lucide-react";
+import { Award, CheckCircle2, Download, AlertCircle, FileCheck2 } from "lucide-react";
 
 interface CertificateRecord {
   certificateId: string;
@@ -18,6 +18,7 @@ interface CertificateRecord {
 const QUESTIONS = [
   {
     id: "q1",
+    correctValue: "tower_core_tower",
     question: {
       en: "1. How does an SMS travel between two mobile phones across Chattogram?",
       bn: "১. চট্টগ্রামের দুটি ফোনের মধ্যে এসএমএস কীভাবে পৌঁছায়?",
@@ -45,6 +46,7 @@ const QUESTIONS = [
   },
   {
     id: "q2",
+    correctValue: "same_volume_faster_time",
     question: {
       en: "2. If you upgrade from 10 Mbps to 50 Mbps while downloading a 200 MB file, what happens?",
       bn: "২. ২০০ মেগাবাইট ফাইল ডাউনলোডে গতি ১০ Mbps থেকে ৫০ Mbps হলে কী ঘটে?",
@@ -65,6 +67,7 @@ const QUESTIONS = [
   },
   {
     id: "q3",
+    correctValue: "buildings_and_distance",
     question: {
       en: "3. Which two factors commonly weaken indoor 4G radio signal strength?",
       bn: "৩. নিচের কোন দুটি কারণে ঘরের ভেতর ৪জি সিগন্যাল দুর্বল হতে পারে?",
@@ -88,6 +91,7 @@ const QUESTIONS = [
   },
   {
     id: "q4",
+    correctValue: "sms_or_voice",
     question: {
       en: "4. On a Padma ferry crossing with weak 2G-only signal, which service is most dependable?",
       bn: "৪. দুর্বল ২জি নেটওয়ার্কে নদী পারাপারে কোন সেবা সবচেয়ে নির্ভরযোগ্য?",
@@ -102,6 +106,7 @@ const QUESTIONS = [
   },
   {
     id: "q5",
+    correctValue: "mnp_cannot_verify_by_prefix",
     question: {
       en: "5. Why can’t a platform prove a phone number uses a Robi SIM solely from its 018 prefix?",
       bn: "৫. শুধুমাত্র ০১৮ প্রিফিক্স দেখে কেন নিশ্চিতভাবে রবি সিম প্রমাণ করা যায় না?",
@@ -125,6 +130,7 @@ const QUESTIONS = [
   },
   {
     id: "q6",
+    correctValue: "sector_bandwidth_sharing",
     question: {
       en: "6. Why can internet slow down at 9 PM even when your phone shows full signal bars?",
       bn: "৬. ফোনে পূর্ণ সিগন্যাল বার থাকার পরও রাত ৯টায় গতি কমতে পারে কেন?",
@@ -296,12 +302,6 @@ export const CertificationSection: React.FC = () => {
           </div>
         </div>
 
-        {/* Prototype Labeling Notice */}
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-3 text-xs text-amber-950">
-          <ShieldAlert className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-          <span>{t(UI_DICT.certification.prototypeNotice, lang)}</span>
-        </div>
-
         {/* Formal Assessment Form */}
         <form
           onSubmit={handleSubmitAssessment}
@@ -334,32 +334,90 @@ export const CertificationSection: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {QUESTIONS.map((q) => (
-              <div
-                key={q.id}
-                className="p-4 rounded-xl bg-stone-50 border border-stone-200 space-y-2"
-              >
-                <div className="text-xs font-semibold text-stone-900">{q.question[lang]}</div>
-                <div className="space-y-1.5">
-                  {q.options.map((opt) => (
-                    <label
-                      key={opt.value}
-                      className="flex items-start gap-2 text-xs text-stone-700 cursor-pointer"
+            {QUESTIONS.map((q) => {
+              const selectedValue = answers[q.id];
+              const isWrongSelected = Boolean(selectedValue) && selectedValue !== q.correctValue;
+
+              return (
+                <div
+                  key={q.id}
+                  className="p-4 rounded-xl bg-stone-50 border border-stone-200 space-y-2.5"
+                >
+                  <div className="text-xs font-semibold text-stone-900">{q.question[lang]}</div>
+                  <div className="space-y-1.5">
+                    {q.options.map((opt) => {
+                      const isChecked = selectedValue === opt.value;
+                      const isCorrectOption = isChecked && opt.value === q.correctValue;
+                      const isWrongOption = isChecked && opt.value !== q.correctValue;
+
+                      return (
+                        <label
+                          key={opt.value}
+                          className="group flex items-start gap-2.5 text-xs text-stone-700 cursor-pointer select-none"
+                        >
+                          <input
+                            type="radio"
+                            name={q.id}
+                            value={opt.value}
+                            checked={isChecked}
+                            onChange={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.value }))}
+                            className="sr-only peer"
+                          />
+                          <span
+                            aria-hidden="true"
+                            data-testid={`radio-bullet-${q.id}-${opt.value}`}
+                            data-state={
+                              isCorrectOption ? "correct" : isWrongOption ? "wrong" : "unselected"
+                            }
+                            className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors duration-150 bg-white peer-focus-visible:ring-2 peer-focus-visible:ring-offset-1 ${
+                              isCorrectOption
+                                ? "border-emerald-600 peer-focus-visible:ring-emerald-600"
+                                : isWrongOption
+                                  ? "border-rose-600 peer-focus-visible:ring-rose-600"
+                                  : "border-stone-400 group-hover:border-stone-600 peer-focus-visible:ring-stone-500"
+                            }`}
+                          >
+                            {isChecked && (
+                              <span
+                                className={`w-2 h-2 rounded-full transition-colors duration-150 ${
+                                  isCorrectOption ? "bg-emerald-600" : "bg-rose-600"
+                                }`}
+                              />
+                            )}
+                          </span>
+                          <span
+                            className={
+                              isCorrectOption
+                                ? "text-emerald-800 font-medium"
+                                : isWrongOption
+                                  ? "text-rose-800 font-medium"
+                                  : "text-stone-700"
+                            }
+                          >
+                            {opt.label[lang]}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  {isWrongSelected && (
+                    <div
+                      role="alert"
+                      data-testid={`wrong-popup-${q.id}`}
+                      className="mt-2 p-2.5 rounded-lg bg-rose-50 border border-rose-200 flex items-center gap-2 text-xs font-medium text-rose-800 shadow-xs transition-opacity duration-150"
                     >
-                      <input
-                        type="radio"
-                        name={q.id}
-                        value={opt.value}
-                        checked={answers[q.id] === opt.value}
-                        onChange={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.value }))}
-                        className="mt-0.5 accent-rose-600"
-                      />
-                      <span>{opt.label[lang]}</span>
-                    </label>
-                  ))}
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span>
+                        {lang === "en"
+                          ? "Wrong answer — please choose another option."
+                          : "ভুল উত্তর — অনুগ্রহ করে অন্য একটি বিকল্প নির্বাচন করুন।"}
+                      </span>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {resultMsg && (

@@ -124,6 +124,7 @@ export const GameArenaPage: React.FC<{
   const mistakeTrackingOn = isMistakeTrackingEnabledForTrail(trail);
 
   const handleComplete = () => {
+    if (justCompleted) return;
     completeTrail(trail.id);
     setProgressPct(100);
     setJustCompleted(true);
@@ -185,6 +186,7 @@ export const GameArenaPage: React.FC<{
           onProgress={setProgressPct}
           onComplete={handleComplete}
           onMistake={handleMistake}
+          onExitToCity={() => navigate(`/cities/${city.id}`, { skipGuard: true })}
         />
       );
     }

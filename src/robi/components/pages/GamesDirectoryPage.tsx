@@ -22,11 +22,11 @@ export const GamesDirectoryPage: React.FC<{
   } = useRobiTrail();
   const { navigate } = useAppRouter();
   const [filterCity, setFilterCity] = useState<"all" | "chattogram" | "dhaka" | "sylhet">(
-    routeCityId || "all",
+    routeCityId || "dhaka",
   );
 
   React.useEffect(() => {
-    setFilterCity(routeCityId || "all");
+    setFilterCity(routeCityId || "dhaka");
   }, [routeCityId]);
 
   const handleFilterChange = (next: "all" | "chattogram" | "dhaka" | "sylhet") => {

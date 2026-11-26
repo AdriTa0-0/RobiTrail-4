@@ -6,45 +6,47 @@ export const HARBOUR_GATEWAY_Z = -165;
 export const HARBOUR_TOTAL_DISTANCE_M = HARBOUR_START_Z - HARBOUR_FINISH_Z; // 240m chase span
 export const HARBOUR_DECK_LENGTH = 264;
 export const HARBOUR_DECK_CENTER_Z = -46; // Spans z = +86 down to z = -178
+export const HARBOUR_PIER_WIDTH = 18.6;
+export const HARBOUR_STEER_LIMIT_X = 7.4;
 export const HARBOUR_PRACTICE_RING_POS = { x: -2.4, z: 60 } as const;
 
 export const HARBOUR_WORLD_BOUNDS = {
-  minX: -7.5,
-  maxX: 7.5,
+  minX: -8.6,
+  maxX: 8.6,
   minZ: -172,
   maxZ: 82,
 } as const;
 
 export const HARBOUR_STATIC_CONTAINER_PLACEMENTS: readonly [number, number][] = [
-  [-4.2, 44],
-  [4.1, -8],
+  [-4.8, 44],
+  [4.8, -8],
   [0.0, -38],
-  [-3.9, -86],
-  [4.2, -118],
-  [-1.2, -153],
+  [-4.8, -90],
+  [4.8, -118],
+  [-1.5, -153],
 ];
 
 export const HARBOUR_LORRY_CONFIGS = [
-  { x: 0, z: 16, color: 0x0284c7, amp: 4.5, speed: 0.9, phase: 0.2 },
-  { x: 0, z: -74, color: 0xf59e0b, amp: 4.6, speed: 1.0, phase: 2.1 },
-  { x: 0, z: -126, color: 0x0f766e, amp: 4.4, speed: 0.95, phase: 3.7 },
+  { x: 0, z: 16, color: 0x0284c7, amp: 3.8, speed: 0.78, phase: 0.2 },
+  { x: 0, z: -64, color: 0xf59e0b, amp: 3.9, speed: 0.84, phase: 2.1 },
+  { x: 0, z: -134, color: 0x0f766e, amp: 3.7, speed: 0.8, phase: 3.7 },
 ] as const;
 
-export const HARBOUR_CRANE_Z_POSITIONS: readonly number[] = [4, -50, -108, -146];
+export const HARBOUR_CRANE_Z_POSITIONS: readonly number[] = [4, -50, -104, -146];
 
 export const HARBOUR_INTERFERENCE_ZONES: readonly [number, number][] = [
-  [3.4, 26],
-  [-3.4, -28],
-  [2.8, -94],
-  [-3.2, -134],
+  [3.6, 26],
+  [-3.6, -24],
+  [3.2, -78],
+  [-3.5, -138],
 ];
 
 export const HARBOUR_BOOST_RING_POSITIONS: readonly [number, number][] = [
   [0.0, 34],
-  [-4.2, -18],
-  [4.4, -62],
-  [-4.0, -100],
-  [3.8, -138],
+  [-4.6, -18],
+  [4.6, -54],
+  [-4.4, -102],
+  [4.2, -130],
   [0.0, -159],
 ];
 
@@ -59,6 +61,22 @@ export function computeHarbourProgressPct(droneZ: number): number {
   if (droneZ <= HARBOUR_FINISH_Z) return 100;
   const pct = ((HARBOUR_START_Z - droneZ) / HARBOUR_TOTAL_DISTANCE_M) * 100;
   return Math.max(0, Math.min(99, Math.round(pct)));
+}
+
+export function computeHarbourSpeed(
+  progressPct: number,
+  opts: {
+    tutorialActive: boolean;
+    boostActive: boolean;
+    inputBoost: boolean;
+    inputBrake: boolean;
+  },
+): number {
+  const clamped = Math.max(0, Math.min(100, progressPct));
+  // Smooth gradual ramp from 12.5 m/s at 0% up to 21.5 m/s at 100%
+  const baseSpeed = opts.tutorialActive ? 8.5 : 12.5 + 9.0 * (clamped / 100);
+  const mult = opts.boostActive ? 1.38 : opts.inputBoost ? 1.2 : opts.inputBrake ? 0.65 : 1.0;
+  return Number((baseSpeed * mult).toFixed(2));
 }
 
 export type HarbourCrashCause = "truck" | "container" | "crane" | "interference";

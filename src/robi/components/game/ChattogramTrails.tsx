@@ -12,6 +12,7 @@ export const ChattogramTrailEngine: React.FC<TrailEngineProps> = ({
   onProgress,
   onComplete,
   onMistake,
+  onExitToCity,
 }) => {
   void hintLevel;
   if (trailId === "ctg-1") {
@@ -29,7 +30,12 @@ export const ChattogramTrailEngine: React.FC<TrailEngineProps> = ({
   }
   if (trailId === "ctg-3") {
     return (
-      <Game3ConnectionRescue3D paused={paused} onProgress={onProgress} onComplete={onComplete} />
+      <Game3ConnectionRescue3D
+        paused={paused}
+        onProgress={onProgress}
+        onComplete={onComplete}
+        onExitToCity={onExitToCity}
+      />
     );
   }
   return <Game4MessageJourney3D paused={paused} onProgress={onProgress} onComplete={onComplete} />;

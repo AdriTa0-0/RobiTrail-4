@@ -39,7 +39,7 @@ export async function activateTrailPassSubscription(
       localCompletedTrailIds: opts.localCompletedTrailIds || [],
       localCertificateIds: opts.localCertificateIds || [],
       preferredLang: opts.preferredLang || "en",
-      preferredCityId: opts.preferredCityId || "chattogram",
+      preferredCityId: opts.preferredCityId || "dhaka",
     }),
   });
   const data = (await res.json()) as SubscribeResponse & { error?: string };

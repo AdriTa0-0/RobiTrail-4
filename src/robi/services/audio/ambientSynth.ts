@@ -37,6 +37,10 @@ const BANSURI_PHRASES: Array<{ freq: number | null; durSec: number }>[] = [
   ],
 ];
 
+export const SUCCESS_CHIME_AUDIO_SRC =
+  "/assets/aistudio/chisper-success-vibraphone-triad-638320_7c83ea58.mp3";
+export const SUCCESS_CHIME_VOLUME = 0.25;
+
 class AmbientSoundEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -45,6 +49,7 @@ class AmbientSoundEngine {
   private stepTimeout: number | null = null;
   private breathNoiseBuffer: AudioBuffer | null = null;
   private activeToken = 0;
+  private successAudio: HTMLAudioElement | null = null;
 
   private ensureContext(): AudioContext | null {
     try {
@@ -75,10 +80,28 @@ class AmbientSoundEngine {
     }
   }
 
+  private ensureSuccessAudio(): HTMLAudioElement | null {
+    try {
+      if (typeof window === "undefined" || typeof Audio === "undefined") {
+        return null;
+      }
+      if (!this.successAudio) {
+        const audio = new Audio(SUCCESS_CHIME_AUDIO_SRC);
+        audio.preload = "auto";
+        audio.volume = SUCCESS_CHIME_VOLUME;
+        this.successAudio = audio;
+      }
+      return this.successAudio;
+    } catch {
+      return null;
+    }
+  }
+
   public startAmbient(baseFreq: number) {
     const ctx = this.ensureContext();
     if (!ctx) return;
     this.stopAmbient();
+    this.ensureSuccessAudio();
 
     try {
       const now = ctx.currentTime;
@@ -107,6 +130,7 @@ class AmbientSoundEngine {
     const ctx = this.ensureContext();
     if (!ctx) return;
     this.stopAmbient();
+    this.ensureSuccessAudio();
 
     const myToken = ++this.activeToken;
 
@@ -267,12 +291,23 @@ class AmbientSoundEngine {
     }
   }
 
+  public stopSuccessChime() {
+    if (!this.successAudio) return;
+    try {
+      this.successAudio.pause();
+      this.successAudio.currentTime = 0;
+    } catch {
+      // Ignore audio element state errors
+    }
+  }
+
   public stopAmbient() {
     this.activeToken += 1;
     if (this.stepTimeout !== null) {
       window.clearTimeout(this.stepTimeout);
       this.stepTimeout = null;
     }
+    this.stopSuccessChime();
     try {
       this.padOscs.forEach((o) => {
         try {
@@ -326,27 +361,40 @@ class AmbientSoundEngine {
 
   public playSuccessChime(enabled: boolean) {
     if (!enabled) return;
+    const audio = this.ensureSuccessAudio();
+    if (!audio) return;
+    try {
+      audio.volume = SUCCESS_CHIME_VOLUME;
+      audio.currentTime = 0;
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {
+          // Ignore browser autoplay or test runtime rejection
+        });
+      }
+    } catch {
+      // Ignore audio playback errors
+    }
+  }
+
+  public playCrashTone(enabled: boolean) {
+    if (!enabled) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
     try {
       const now = ctx.currentTime;
-      [392.0, 493.88, 587.33, 783.99].forEach((freq, idx) => {
-        const o = ctx.createOscillator();
-        const f = ctx.createBiquadFilter();
-        const g = ctx.createGain();
-        o.type = "sine";
-        o.frequency.value = freq;
-        f.type = "lowpass";
-        f.frequency.value = 1400;
-        g.gain.setValueAtTime(0.0008, now + idx * 0.09);
-        g.gain.linearRampToValueAtTime(0.032, now + idx * 0.09 + 0.025);
-        g.gain.exponentialRampToValueAtTime(0.0005, now + idx * 0.09 + 0.42);
-        o.connect(f);
-        f.connect(g);
-        g.connect(ctx.destination);
-        o.start(now + idx * 0.09);
-        o.stop(now + idx * 0.09 + 0.45);
-      });
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sawtooth";
+      o.frequency.setValueAtTime(175, now);
+      o.frequency.exponentialRampToValueAtTime(58, now + 0.28);
+      g.gain.setValueAtTime(0.001, now);
+      g.gain.linearRampToValueAtTime(0.055, now + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0005, now + 0.3);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start(now);
+      o.stop(now + 0.32);
     } catch {
       // Ignore
     }

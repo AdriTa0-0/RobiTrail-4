@@ -156,7 +156,7 @@ export async function verifyBdappsOtp(
     localCompletedTrailIds: opts.localCompletedTrailIds || [],
     localCertificateIds: opts.localCertificateIds || [],
     preferredLang: opts.preferredLang || "en",
-    preferredCityId: opts.preferredCityId || "chattogram",
+    preferredCityId: opts.preferredCityId || "dhaka",
   });
   setSubscriberToken(result.token);
   return result;
@@ -202,7 +202,7 @@ export async function directRobiAuth(
       localCompletedTrailIds: opts.localCompletedTrailIds || [],
       localCertificateIds: opts.localCertificateIds || [],
       preferredLang: opts.preferredLang || "en",
-      preferredCityId: opts.preferredCityId || "chattogram",
+      preferredCityId: opts.preferredCityId || "dhaka",
     },
   );
   setSubscriberToken(result.token);

@@ -816,3 +816,186 @@ export function createHarbourGateway(maxAnisotropy = 4): THREE.Group {
 
   return g;
 }
+
+/** Composite Multi-Part Port Cargo Ship anchored beside Chattogram Pier */
+export function createHarbourCargoShip(hullColor = 0x881337, deckAccent = 0x0284c7): THREE.Group {
+  const g = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({
+    color: hullColor,
+    roughness: 0.55,
+    metalness: 0.25,
+  });
+  const waterlineMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    roughness: 0.7,
+    metalness: 0.2,
+  });
+  const deckMat = new THREE.MeshStandardMaterial({
+    color: 0x475569,
+    roughness: 0.75,
+  });
+  const bridgeMat = new THREE.MeshStandardMaterial({
+    color: 0xf8fafc,
+    roughness: 0.35,
+  });
+  const windowMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    roughness: 0.15,
+    metalness: 0.8,
+  });
+
+  // 1. Waterline stripe & main hull
+  const lowerHull = new THREE.Mesh(new THREE.BoxGeometry(8.8, 1.3, 42), waterlineMat);
+  lowerHull.position.y = 0.45;
+  g.add(lowerHull);
+
+  const mainHull = new THREE.Mesh(new THREE.BoxGeometry(9.2, 2.8, 42), hullMat);
+  mainHull.position.y = 2.4;
+  mainHull.castShadow = true;
+  mainHull.receiveShadow = true;
+  g.add(mainHull);
+
+  // 2. Tapered bow prow
+  const bow = new THREE.Mesh(new THREE.ConeGeometry(4.6, 8.5, 4), hullMat);
+  bow.rotation.x = -Math.PI / 2;
+  bow.rotation.y = Math.PI / 4;
+  bow.scale.set(1.0, 0.48, 1.0);
+  bow.position.set(0, 2.35, -24.5);
+  bow.castShadow = true;
+  g.add(bow);
+
+  // 3. Weather deck plating
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(8.5, 0.25, 39), deckMat);
+  deck.position.y = 3.9;
+  g.add(deck);
+
+  // 4. Stacked deck containers (2 rows x 3 stacks)
+  const stackColors = [deckAccent, 0xf59e0b, 0x0f766e, 0xe11d48];
+  [-11, -3, 5].forEach((cz, idx) => {
+    [-2.1, 2.1].forEach((cx, lane) => {
+      const c = createShippingContainer(stackColors[(idx + lane) % stackColors.length], 6.4);
+      c.scale.set(0.9, 0.85, 0.9);
+      c.position.set(cx, 4.02, cz);
+      g.add(c);
+    });
+  });
+
+  // 5. Aft bridge superstructure & radar mast
+  const bridgeBase = new THREE.Mesh(new THREE.BoxGeometry(6.8, 5.2, 6.2), bridgeMat);
+  bridgeBase.position.set(0, 6.5, 15.5);
+  bridgeBase.castShadow = true;
+  g.add(bridgeBase);
+
+  const bridgeWing = new THREE.Mesh(new THREE.BoxGeometry(8.4, 1.2, 2.6), bridgeMat);
+  bridgeWing.position.set(0, 8.8, 15.2);
+  g.add(bridgeWing);
+
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.75, 0.2), windowMat);
+  visor.position.set(0, 8.8, 13.85);
+  g.add(visor);
+
+  const funnel = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.85, 2.4, 10), hullMat);
+  funnel.position.set(0, 10.2, 17.5);
+  g.add(funnel);
+
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 3.2, 8), bridgeMat);
+  mast.position.set(0, 10.9, 14.8);
+  g.add(mast);
+
+  return g;
+}
+
+/** Composite Port Daylight Light Mast */
+export function createPierLightMast(): THREE.Group {
+  const g = new THREE.Group();
+  const poleMat = new THREE.MeshStandardMaterial({
+    color: 0xcbd5e1,
+    roughness: 0.35,
+    metalness: 0.65,
+  });
+  const baseMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.75 });
+  const lampMat = new THREE.MeshStandardMaterial({
+    color: 0xfef9c3,
+    emissive: 0xfde047,
+    emissiveIntensity: 0.9,
+    roughness: 0.2,
+  });
+
+  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.35, 0.55, 8), baseMat);
+  plinth.position.y = 0.28;
+  g.add(plinth);
+
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.14, 7.2, 8), poleMat);
+  pole.position.y = 4.1;
+  pole.castShadow = true;
+  g.add(pole);
+
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.12, 0.14), poleMat);
+  arm.position.set(0.78, 7.6, 0);
+  g.add(arm);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.16, 0.34), lampMat);
+  head.position.set(1.52, 7.52, 0);
+  g.add(head);
+
+  return g;
+}
+
+/** Composite Floating Harbour Channel Buoy */
+export function createChannelBuoy(colorHex = 0xe11d48): THREE.Group {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: colorHex,
+    roughness: 0.35,
+    metalness: 0.2,
+  });
+  const collarMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4 });
+  const beaconMat = new THREE.MeshStandardMaterial({
+    color: 0xfde047,
+    emissive: 0xf59e0b,
+    emissiveIntensity: 1.4,
+  });
+
+  const floatRing = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.15, 0.55, 14), bodyMat);
+  floatRing.position.y = 0.25;
+  g.add(floatRing);
+
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.65, 1.55, 10), collarMat);
+  tower.position.y = 1.25;
+  g.add(tower);
+
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 10), beaconMat);
+  beacon.position.y = 2.15;
+  g.add(beacon);
+
+  return g;
+}
+
+/** Roadside Pier Distance Sector Sign (60m / 120m / 180m / 240m) */
+export function createDistanceSectorSign(
+  distText: string,
+  subText: string,
+  maxAnisotropy = 4,
+): THREE.Group {
+  const g = new THREE.Group();
+  const postMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    roughness: 0.5,
+    metalness: 0.5,
+  });
+
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 3.3, 8), postMat);
+  post.position.y = 1.65;
+  post.castShadow = true;
+  g.add(post);
+
+  const tex = makeSignTexture(distText, subText, "#0f172a", "#38bdf8", maxAnisotropy);
+  const board = new THREE.Mesh(
+    new THREE.BoxGeometry(2.6, 0.95, 0.14),
+    new THREE.MeshBasicMaterial({ map: tex }),
+  );
+  board.position.y = 3.45;
+  g.add(board);
+
+  return g;
+}
