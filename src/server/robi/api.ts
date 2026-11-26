@@ -97,13 +97,12 @@ function tokenCheckoutGate(): { allowed: boolean; reason: string | null } {
 
 function buildSubscriptionDisclosure(mode: "preview" | "production", shortCode: string) {
   return {
-    planName: "RobiTrail Access (All 16 City Trails)",
-    priceLabel:
-      mode === "production" ? "bdapps Subscription Billing" : "Gateway Configuration Required",
-    billingFrequency: "Processed via bdapps Subscription API",
+    planName: "RobiTrail Free Subscription",
+    priceLabel: mode === "production" ? "Free (BDT 0)" : "Gateway Configuration Required",
+    billingFrequency: "No subscription fee",
     renewalTerms:
-      "Token Center pack credits are applied once carrier subscription confirmation completes.",
-    cancellationMethod: "Use the in-app unsubscribe control when managing active subscriptions.",
+      "No subscription charge is configured. Optional token purchases are separate and require their own approved payment confirmation.",
+    cancellationMethod: "Use the in-app unsubscribe control to cancel this subscription.",
     shortCode,
   };
 }
