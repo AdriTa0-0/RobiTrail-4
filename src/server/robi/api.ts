@@ -462,8 +462,9 @@ app.post("/api/bdapps/subscription/otp/verify", requireSubscriberAuth, async (re
     res.status(503).json({ error: gate.reason || "Subscription OTP is not configured." });
     return;
   }
-  if (req.body?.consentAccepted !== true) {
-    res.status(400).json({ error: "Subscription consent must remain confirmed during OTP verification." });
+  if (req.body?.consentAccepted !== true || req.body?.termsAccepted !== true ||
+      !(process.env.ROBITRAIL_SUBSCRIPTION_TERMS_TEXT || "").trim()) {
+    res.status(400).json({ error: "Verified subscription terms and explicit consent are required before activating bdapps subscription." });
     return;
   }
   const session = req.subscriberSession!;
@@ -473,6 +474,10 @@ app.post("/api/bdapps/subscription/otp/verify", requireSubscriberAuth, async (re
       res.status(503).json({ error: checkoutGate.reason || "Carrier checkout unavailable." });
       return;
     }
+  }
+  if (req.body?.purpose !== "free_subscription" && req.body?.purpose !== "token_purchase") {
+    res.status(400).json({ error: "An explicit subscription verification purpose is required." });
+    return;
   }
   const challenge = verifyProviderOtpChallenge(req.body?.referenceNo, session.msisdn);
   const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
@@ -934,6 +939,8 @@ app.get("/api/tokens/packages", (_req, res) => {
     gatewayBlockedReason: gate.reason,
     otpRequestReady: runtime.mode === "production" && otpGate.allowed,
     otpBlockedReason: otpGate.reason,
+    freeSubscriptionVerifyReady: otpGate.allowed && runtime.subscriptionEnabled &&
+      Boolean((process.env.ROBITRAIL_SUBSCRIPTION_TERMS_TEXT || "").trim()),
     packages: TOKEN_SHOP_PACKAGES,
   });
 });
@@ -1340,7 +1347,9 @@ app.post("/api/internal/bdapps/callback", async (req, res) => {
         walletBalance: number | null;
       } | null = null;
 
-      if (getLiveSubscriptionGateStatus().allowed) {
+      if (getLiveSubscriptionGateStatus().allowed &&
+          process.env.ROBITRAIL_CARRIER_CHECKOUT_APPROVED === "true" &&
+          getLiveChargingGateStatus().allowed) {
         if (registered) {
           const settled = await settlePendingSubscriptionPurchaseForMsisdn(msisdn, "confirmed", {
             providerStatusCode: "S1000",
