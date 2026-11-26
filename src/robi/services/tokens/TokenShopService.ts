@@ -18,6 +18,7 @@ export interface TokenShopPackagesResponse {
   gatewayBlockedReason: string | null;
   otpRequestReady: boolean;
   otpBlockedReason: string | null;
+  freeSubscriptionVerifyReady: boolean;
   packages: TokenPackage[];
 }
 
@@ -49,6 +50,7 @@ export async function fetchTokenShopPackages(): Promise<TokenShopPackagesRespons
       gatewayBlockedReason: data.gatewayBlockedReason || null,
       otpRequestReady: Boolean(data.otpRequestReady),
       otpBlockedReason: data.otpBlockedReason || null,
+      freeSubscriptionVerifyReady: Boolean(data.freeSubscriptionVerifyReady),
       packages:
         Array.isArray(data.packages) && data.packages.length > 0
           ? data.packages
@@ -65,6 +67,7 @@ export async function fetchTokenShopPackages(): Promise<TokenShopPackagesRespons
       gatewayBlockedReason: "Unable to verify bdapps Subscription gateway status.",
       otpRequestReady: false,
       otpBlockedReason: "Unable to verify bdapps OTP gateway status.",
+      freeSubscriptionVerifyReady: false,
       packages: [...TOKEN_PACKAGES],
     };
   }
@@ -210,8 +213,8 @@ export async function requestTokenCheckoutOtp(phoneNumber: string): Promise<{
   notice?: string;
 }> {
   return checkoutPost("/api/bdapps/subscription/otp/request", {
-    purpose: "token_purchase", phoneNumber, deliveryOnly: true,
-    consentAccepted: true, termsAccepted: false,
+    purpose: "free_subscription", phoneNumber,
+    consentAccepted: true, termsAccepted: true,
   });
 }
 
@@ -226,8 +229,8 @@ export async function verifyTokenCheckoutOtp(referenceNo: string, otp: string): 
     token?: string;
     notice?: string;
   }>("/api/bdapps/subscription/otp/verify", {
-    purpose: "token_purchase", referenceNo, otp,
-    consentAccepted: true,
+    purpose: "free_subscription", referenceNo, otp,
+    consentAccepted: true, termsAccepted: true,
   });
   // Provider verification upgrades the existing account's authenticated bearer token.
   if (result.verified && result.token) setSubscriberToken(result.token);
