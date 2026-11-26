@@ -17,6 +17,7 @@
     "BDAPPS_MODE": "production",
     "ROBITRAIL_SMS_LOGIN_ENABLED": "true",
     "BDAPPS_LIVE_CHARGING_ENABLED": "false",
-    "BDAPPS_SUBSCRIPTION_ENABLED": "true"
+   "BDAPPS_SUBSCRIPTION_ENABLED": "true",
+   "ROBITRAIL_SUBSCRIPTION_TERMS_TEXT": "RobiTrail subscription is free (BDT 0). No subscription fee is charged. Token purchases are optional and require separate payment authorization. Users can unsubscribe through subscription management."
   }
 }
